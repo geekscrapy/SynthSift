@@ -61,6 +61,7 @@
     dock: store.get("dock", "right"),
     panelOnly: new URLSearchParams(location.search).get("view") === "panel",
     popout: null,
+    posCache: {},
   };
   const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
   const sevRank = (s) => SEV_ORDER.indexOf(s);
@@ -374,12 +375,46 @@
   }
   function applyFilters() {
     computeVisible();
-    if (nodesView) { nodesView.refresh(); edgesView.refresh(); }
+    if (nodesView) {
+      const before = network ? network.getPositions() : {};
+      Object.assign(S.posCache, before);
+      nodesView.refresh();
+      edgesView.refresh();
+      restorePositions(before);
+    }
     if (S.layout === "layers") applyLayout(false);
     renderStats(S.data && S.data.stats);
     store.set("hiddenConvs", [...S.hiddenConvs]);
     store.set("hiddenKinds", [...S.hiddenKinds]);
     store.set("hiddenLayers", [...S.hiddenLayers]);
+  }
+
+  // Nodes re-added to a vis DataView lose their coordinates. Put them back where they were (cheaply, on the
+  // body) and only run the physics when some node has never been laid out.
+  function restorePositions(before) {
+    if (!network || !network.body) return;
+    let unseen = 0;
+    for (const id of S.visibleNodes) {
+      if (before[id]) continue;
+      const nd = network.body.nodes[id];
+      const p = S.posCache[id];
+      if (!nd) continue;
+      if (p) { nd.x = p.x; nd.y = p.y; } else unseen++;
+    }
+    if (unseen) settleLayout();
+    else network.redraw();
+  }
+  function settleLayout() {
+    if (!network) return;
+    network.setOptions({ physics: { ...physicsOptions(true), stabilization: false } });
+    S.physics = true;
+    updatePhysicsButton();
+    // small views can afford a longer settle; big ones stay responsive
+    network.stabilize(Math.round(Math.min(400, Math.max(120, 30000 / Math.max(1, S.visibleNodes.size)))));
+    network.once("stabilized", () => {
+      if (!S.settings.keep_physics) setPhysics(false);
+      network.fit({ animation: { duration: 300 } });
+    });
   }
 
   /* =========================================================== network */
