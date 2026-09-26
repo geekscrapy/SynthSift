@@ -15,6 +15,11 @@
   <header class="topbar">
     <button class="icon-btn" id="btn-left" title="Toggle conversations panel"><span class="msi">menu</span></button>
     <div class="brand"><img class="logo" src="/static/favicon.svg" alt=""><span><b>Synth</b>Sift</span></div>
+    <nav class="page-nav" aria-label="Views">
+      <a href="/" class="on" aria-current="page"><span class="msi">hub</span><span>Graph</span></a>
+      <a href="/nodes"><span class="msi">table_rows</span><span>Nodes</span></a>
+      <a href="/timeline"><span class="msi">timeline</span><span>Timeline</span></a>
+    </nav>
     <label class="search" id="global-search">
       <span class="msi">search</span>
       <input id="q" type="search" autocomplete="off" spellcheck="false"
@@ -50,6 +55,7 @@
           <label class="mini-select" title="Filter by user"><span class="msi xs">person</span><select id="f-user"></select></label>
           <label class="mini-select" title="Filter by agent / harness"><span class="msi xs">terminal</span><select id="f-harness"></select></label>
         </div>
+        <div class="chip-row conv-filter hidden" id="f-conv"></div>
         <label class="search compact">
           <span class="msi sm">travel_explore</span>
           <input id="conv-q" type="search" placeholder="Find conversations containing…" autocomplete="off">
@@ -115,7 +121,6 @@
           <button class="tab on" data-tab="transcript"><span class="msi sm">forum</span><span class="tab-label">Transcript</span></button>
           <button class="tab" data-tab="matches"><span class="msi sm">format_list_bulleted</span><span class="tab-label">Matches</span> <span class="badge soft hidden" id="match-count">0</span></button>
           <button class="tab" data-tab="security"><span class="msi sm">shield</span><span class="tab-label">Security</span> <span class="badge sev hidden" id="sec-count">0</span></button>
-          <button class="tab" data-tab="timeline"><span class="msi sm">timeline</span><span class="tab-label">Timeline</span> <span class="badge soft hidden" id="tl-count">0</span></button>
           <span class="spacer"></span>
           <button class="icon-btn sm" id="underline-toggle" title="Underline extracted entities"><span class="msi">label</span></button>
           <button class="icon-btn sm" id="btn-dock" title="Dock position / open in new window"><span class="msi">dock_to_right</span></button>

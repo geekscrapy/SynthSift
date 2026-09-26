@@ -15,8 +15,9 @@ exact words in the transcript.
 For security analysts it also flags **data leaving the host, downloads, exposed
 secrets, sensitive-file access and destructive commands**, draws them as
 `source → action → sink` chains (e.g. `/tmp/prod.sql.gz → s3://public-bucket`),
-and lets you **tag and comment** on sessions, turns and terms and review
-everything tagged on a timeline.
+and lets you **tag and comment** on sessions, turns and terms. Two full-page
+views sit next to the graph: **Nodes**, a sortable, filterable table of every
+node, and **Timeline**, everything tagged plus the findings, row by row.
 
 ![Overview](docs/overview.jpg)
 
@@ -53,27 +54,80 @@ is one session and may hold several conversations.
 
 ## Using the UI
 
+The top bar switches between three pages: **Graph**, **Nodes** and **Timeline**.
+They share the host / user / agent / conversation filters, the tag filter, *Hide
+ignored*, and all tags and comments. A change on one page shows up at once on
+the others, including in other tabs.
+
+### Graph
+
 | Where | What it does |
 |---|---|
 | **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click zooms. |
 | **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
-| **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, timeline). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
+| **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
 | **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. |
 | **Security tab** | Findings grouped by severity and category, each with its `source → action → sink` chain and where it happened. Click one to jump to the turn. **Flagged** (graph toolbar) fades everything without a finding; flagged nodes carry a severity ring and dataflow edges are drawn bold. |
-| **Tagging** | Right-click a node, a transcript turn, an underlined term, a finding, a timeline row or a conversation in the tree to tag it **bad / suspicious / seen / ignore** or a custom tag, and to add a comment. The selection card has one-click tag checkboxes too. Tag chips in the left panel fade untagged nodes; *Hide ignored* removes `ignore`d items from the graph. |
-| **Timeline tab** | Every tagged session, turn and term in chronological order, row by row with tags and comments, optionally interleaved with findings. Export to CSV. |
+| **Tagging** | Right-click a node, a transcript turn, an underlined term, a finding or a conversation in the tree to tag it **bad / suspicious / seen / ignore** or a custom tag, and to add a comment. The selection card has one-click tag checkboxes too. Tag chips in the left panel fade untagged nodes; *Hide ignored* removes `ignore`d items from the graph. |
 | **Docking** | The panel docks right, left or bottom, or opens in its own window (the two windows stay in sync). |
 | **Layers chips** | Show or hide the *Thoughts*, *Dialogue*, *Actions* and *Entities* layers. |
 | **Force / Layers** | *Force*: free physics. *Layers*: a swim-lane timeline with thoughts above the dialogue, tool calls and arguments below it, and entities at the bottom. Thoughts sit on their own band because they weren't acted on. |
 | **Node types** | Legend and filter: click to toggle a type, shift-click to show only that type. |
 | **Export** | Standalone **pyvis HTML** (works offline), **GraphML** (Gephi / yEd / Cytoscape) or a PNG of the current view. |
+| **Open in Nodes** | The selection card's table button opens the selected node in the Nodes page. |
 | **Settings** (⚙) | Knobs for extraction, text sources, custom vocabularies/patterns, graph content, edges, security analysis (including an analyst **watchlist** of your own patterns), physics, appearance, the transcript panel and every colour. Each setting shows whether changing it re-analyses the transcripts, rebuilds the graph, or applies instantly. |
 
 ![Selecting a node](docs/selection.jpg)
 ![Layers layout](docs/layers.jpg)
 ![Security findings with a dataflow chain](docs/security.jpg)
 ![Right-click tagging](docs/tagging.jpg)
-![Timeline of tagged rows](docs/timeline.jpg)
+
+### Nodes (`/nodes`)
+
+Every node in one table: sessions, turns, tool calls and arguments, thoughts and
+extracted terms.
+
+- **Sort** by any column: name, type, findings (worst severity first), tags,
+  layer, mentions, links, conversations, host / user, first seen or last seen.
+  The *Columns* button hides or shows columns.
+- **Filter**
+  - The top search matches names, and the text of turns (`/regex/` supported).
+  - The side rail filters by host, user, agent and conversation; tag chips
+    and *Hide ignored*; tagged, untagged or commented; findings severity and
+    category; layers; node types (shift-click for "only this type"); and a
+    minimum mention count for terms.
+- **Tag**
+  - Right-click a row to tag it or comment on it.
+  - Check rows (shift-click for a range, or use the header box for the whole
+    page, then *Select all*) and use the bulk tag bar, or right-click the
+    selection. Its chips show whether all, some or none of the rows carry
+    each tag.
+  - Tags a turn inherits from its session are drawn outlined.
+- **Detail pane**: click a row to see its findings, tags and comment, linked
+  nodes and every paragraph it appears in, with the word highlighted.
+  Double-click, <kbd>Enter</kbd> or *Show in graph* reveals it in the graph,
+  reusing an open graph tab.
+- **Keys**: <kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>j</kbd>/<kbd>k</kbd>) move
+  through the rows, <kbd>Space</kbd> checks one, <kbd>←</kbd>/<kbd>→</kbd>
+  page, <kbd>/</kbd> searches.
+- **CSV export** of the filtered rows.
+
+![Nodes table with bulk tagging and the detail pane](docs/nodes.jpg)
+
+### Timeline (`/timeline`)
+
+Every tagged session, turn and term, plus the security findings, in time order,
+row by row and grouped by day.
+
+- **Filter** by row kind (sessions / turns / terms / findings), by the shared
+  scope and tag filters, by comments only, by findings severity and category,
+  and by date range. Sort oldest or newest first.
+- **Tag** single rows or many at once, the same way as on the Nodes page.
+- **Detail pane**: a finding's `source → action → sink` chain, the turn's tags
+  and comment, and the turn in context, with adjustable **# before / # after**.
+- **CSV export**, including the chain for each finding.
+
+![Timeline of tagged rows and findings](docs/timeline.jpg)
 
 ## Security analysis
 
