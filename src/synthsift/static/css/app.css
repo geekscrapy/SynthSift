@@ -886,3 +886,5 @@ textarea.sel-comment { font-family: var(--font); font-size: 13px; }
 }
 .data-grid td.nowrap { white-space: nowrap; }
 .tag-chip.inherited { background: transparent; color: var(--tag); box-shadow: inset 0 0 0 1px var(--tag); }
+.tag.warn { background: color-mix(in srgb, var(--sev-high) 16%, var(--surface)); color: var(--sev-high); }
+.conv-meta .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

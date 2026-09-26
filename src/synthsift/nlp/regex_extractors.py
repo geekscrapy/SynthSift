@@ -93,7 +93,8 @@ REGEX_DEFS: list[RegexDef] = [
         rf"\b(?:localhost|(?:[a-z0-9-]+\.)+(?:{_TLDS})|[a-z][a-z0-9-]*-(?:\d+|db|api|srv|host|node))" r":\d{2,5}\b", re.I), literal=False),
     RegexDef("windows_path", "file_path", re.compile(r"\b[A-Za-z]:\\(?:[^\\\s<>:\"|?*]+\\)*[^\\\s<>:\"|?*]*")),
     RegexDef("unix_path", "file_path", re.compile(
-        r"(?<![\w.:/@<*-])(?:~|\.{1,2})?/(?:[\w.@+%-]+/)*[\w.@+%-]*[\w@+%-](?:/)?"),
+        # "@" may precede a path in curl's -d @file / -F 'f=@file', but not user@host/…
+        r"(?<![\w.:/<*-])(?<![\w.:]@)(?:~|\.{1,2})?/(?:[\w.@+%-]+/)*[\w.@+%-]*[\w@+%-](?:/)?"),
         validate=lambda s: len(s) > 2 and s.count("/") >= 1 and not re.fullmatch(r"/\d+", s)),
     RegexDef("relative_path", "file_path", re.compile(
         rf"(?<![\w/.<-])[\w.-]+(?:/[\w.@-]+)+\.(?:{_FILE_EXT}|{_WEAK_EXT})\b", re.I)),

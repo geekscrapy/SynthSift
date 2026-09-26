@@ -1190,7 +1190,7 @@
     const meta = el("div", { class: "conv-meta" },
       el("span", { class: "tag" }, icon("computer", "xs"), c.host), el("span", { class: "tag" }, icon("person", "xs"), c.user),
       el("span", { class: "tag" }, icon("terminal", "xs"), c.harness), c.model ? el("span", { class: "tag" }, icon("smart_toy", "xs"), c.model) : null,
-      el("span", { class: "tag", title: c.source }, icon("description", "xs"), c.session));
+      el("span", { class: "tag", title: c.source }, icon("description", "xs"), c.session), ...SS.metaChips(c.meta));
     const collapse = S.settings.collapse_tool_results !== false;
     // long conversations render a window of events around the target
     const evs = S.data.events.filter((e) => e.c === cid);
