@@ -68,8 +68,11 @@ def build_graph(
     paragraphs: dict[str, Paragraph],
     analysis: dict[str, ParaResult],
     cfg: dict[str, Any],
+    findings: list[Any] | None = None,
 ) -> nx.MultiDiGraph:
     """conversations: [{id, title, …}], events: conv id -> events in order."""
+    from ..nlp.security import SEV_RANK
+
     G = nx.MultiDiGraph()
     merge = cfg.get("merge_across_conversations", True)
     arg_max = int(cfg.get("arg_value_max", 48))
@@ -255,8 +258,42 @@ def build_graph(
                 if ls and ll.endswith("/" + ls):
                     add_edge(long_, short, "alias", label="same file?")
 
+    # ------------------------------------------------------ security overlay
+    protected: set[str] = set()
+    if findings:
+        def worse(node: str, sev: str, cat: str) -> None:
+            d = G.nodes[node]
+            cur = d.get("sec")
+            if cur is None or SEV_RANK.get(sev, 0) > SEV_RANK.get(cur, 0):
+                d["sec"] = sev
+            cats = d.setdefault("secc", [])
+            if cat not in cats:
+                cats.append(cat)
+            protected.add(node)
+
+        def resolve(endpoint: str, conv: str) -> str | None:
+            if endpoint in G:  # an event / tool-call node id
+                return endpoint
+            nid = ent_id(conv, endpoint)
+            return nid if nid in G else None
+
+        for f in findings:
+            if f.event in G:
+                worse(f.event, f.severity, f.category)
+            for k in f.entities:
+                nid = ent_id(f.conv, k)
+                if nid in G:
+                    worse(nid, f.severity, f.category)
+            for src, action, dst in f.chain:
+                a, b = resolve(src, f.conv), resolve(dst, f.conv)
+                if a and b and a != b:
+                    add_edge(a, b, "dataflow", label=action, sev=f.severity, cat=f.category, conv=f.conv)
+                    protected.add(a)
+                    protected.add(b)
+
     if cfg.get("drop_isolated", True):
-        G.remove_nodes_from([n for n in list(G.nodes) if G.degree(n) == 0 and G.nodes[n].get("type") == "entity"])
+        G.remove_nodes_from([n for n in list(G.nodes)
+                             if G.degree(n) == 0 and G.nodes[n].get("type") == "entity" and n not in protected])
     return G
 
 

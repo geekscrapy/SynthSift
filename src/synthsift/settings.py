@@ -22,6 +22,7 @@ from typing import Any
 
 from .categories import CATEGORIES, NODE_TYPES
 from .nlp.regex_extractors import REGEX_DEFS
+from .nlp.security import SEVERITIES
 
 NER_LABELS = [
     "PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART",
@@ -57,6 +58,7 @@ S_EDGES = "Edges & relations"
 S_LAYOUT = "Layout & physics"
 S_LOOK = "Appearance"
 S_PANEL = "Transcript panel"
+S_SECURITY = "Security analysis"
 S_COLORS = "Colours"
 
 SCHEMA: list[Field] = [
@@ -192,6 +194,27 @@ SCHEMA: list[Field] = [
           "Click an underlined word to jump to its node."),
     Field("collapse_tool_results", "Collapse long tool results", "bool", True, "view", S_PANEL),
     Field("panel_width", "Panel width (px)", "int", 440, "view", S_PANEL, min=280, max=1200, step=10),
+    # ------------------------------------------------------------ security
+    Field("sec_enabled", "Security analysis", "bool", True, "graph", S_SECURITY,
+          "Flag exfiltration, downloads, exposed secrets, sensitive-file access and destructive commands."),
+    Field("sec_dataflow", "Dataflow chains", "bool", True, "graph", S_SECURITY,
+          "Link source → action → sink within a tool call (e.g. a file leaving to a domain)."),
+    Field("sec_secrets", "Secret scanning", "bool", True, "graph", S_SECURITY,
+          "Detect private keys, cloud keys, tokens and password assignments in text, arguments and output."),
+    Field("sec_scan_results", "Scan tool output for secrets", "bool", True, "graph", S_SECURITY,
+          "Also scan command/tool output, not just prompts and arguments."),
+    Field("sec_sensitive_paths", "Sensitive-file access", "bool", True, "graph", S_SECURITY,
+          "Flag reads of credential locations such as /etc/shadow, ~/.ssh/id_rsa, .aws/credentials, .env."),
+    Field("sec_risky_ops", "Risky / destructive operations", "bool", True, "graph", S_SECURITY,
+          "Flag recursive deletes, disk overwrites, DROP/TRUNCATE, force pushes and history/log clearing."),
+    Field("sec_min_severity", "Minimum severity", "select", "low", "graph", S_SECURITY,
+          "Hide findings below this severity.", options=SEVERITIES),
+    Field("security_watchlist", "Analyst watchlist", "textarea",
+          "# one per line:  Label: <regex>    (optional [severity] prefix)\n"
+          "# [high] Data staging: base64\s+-d\n"
+          "# [medium] Package install: \bpip\s+install\b\n",
+          "graph", S_SECURITY,
+          "Your own terms or patterns to flag. Matched (case-insensitive) against every message, argument and result."),
 ]
 
 # Colour overrides for every node type / category

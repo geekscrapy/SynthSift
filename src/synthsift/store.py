@@ -24,6 +24,7 @@ from . import categories
 from .graph.builder import build_graph, graph_to_json
 from .ingest import read_zip
 from .models import Conversation
+from .nlp import security
 from .nlp.pipeline import Analyzer, ParaResult
 from .segment import Event, Paragraph, segment
 from .settings import SettingsStore
@@ -79,6 +80,7 @@ class Workspace:
         self._analysis_cache: dict[str, ParaResult] = {}  # (text hash) -> result for current parse cfg
         self._cache_fp = ""
         self.payload: dict[str, Any] | None = None
+        self.findings: list[security.Finding] = []
         self.graph = None
         self.warnings: list[str] = []
         self._lock = threading.Lock()
@@ -225,17 +227,29 @@ class Workspace:
         return out
 
     def _build(self) -> None:
-        self._set("graph", 0.5, "Building graph")
+        self._set("graph", 0.4, "Scanning for security signals")
+        self.findings = security.scan(self.conversations, self.events, self.paragraphs, self.analysis,
+                                      self.settings.values)
+        self._set("graph", 0.6, "Building graph")
         convs = self._conv_meta()
-        G = build_graph(convs, self.events, self.paragraphs, self.analysis, self.settings.values)
+        G = build_graph(convs, self.events, self.paragraphs, self.analysis, self.settings.values, self.findings)
         self.graph = G
         data = graph_to_json(G)
+        sev_counts: dict[str, int] = {}
+        for f in self.findings:
+            sev_counts[f.severity] = sev_counts.get(f.severity, 0) + 1
         self.payload = {
             "conversations": convs,
             "events": [e.to_json() for c in self.conversations for e in self.events.get(c.id, [])],
             "paragraphs": [p.to_json() for p in self.paragraphs.values()],
             "nodes": data["nodes"],
             "edges": data["edges"],
+            "findings": [f.to_json() for f in self.findings],
+            "security": {
+                "categories": security.CATEGORIES,
+                "severities": security.SEVERITIES,
+                "counts": sev_counts,
+            },
             "warnings": self.warnings,
             "datasets": [d.to_json() for d in self.datasets.values()],
             "kinds": categories.as_json(),
@@ -243,5 +257,6 @@ class Workspace:
                 "conversations": len(convs), "paragraphs": len(self.paragraphs),
                 "nodes": G.number_of_nodes(), "edges": G.number_of_edges(),
                 "entities": sum(1 for _, d in G.nodes(data=True) if d.get("type") == "entity"),
+                "findings": len(self.findings),
             },
         }

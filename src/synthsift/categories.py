@@ -38,6 +38,7 @@ CATEGORIES: list[Kind] = [
     Kind("ip", "IP address", "Technical", "#D93025", "lan"),
     Kind("host", "Host:port", "Technical", "#EE675C", "dns"),
     Kind("email", "Email", "Technical", "#B31412", "mail"),
+    Kind("credential", "Secret / credential", "Technical", "#B31412", "key"),
     Kind("hash", "Hash", "Technical", "#681DA8", "tag"),
     Kind("uuid", "UUID", "Technical", "#AF5CF7", "fingerprint"),
     Kind("cve", "CVE", "Technical", "#A50E0E", "gpp_bad"),
@@ -119,7 +120,7 @@ NER_TO_CATEGORY = {
 
 # Categories whose surface form is case sensitive / should not be lemmatised
 LITERAL_CATEGORIES = {
-    "file_path", "url", "hash", "uuid", "env_var", "code", "version", "cve", "cloud", "error",
+    "file_path", "url", "hash", "uuid", "env_var", "code", "version", "cve", "cloud", "error", "credential",
 }
 
 
