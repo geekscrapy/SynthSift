@@ -63,6 +63,7 @@
     popout: null,
     clusterMode: store.get("clusterMode", null),
     clusters: new Map(),
+    posCache: {},
   };
   const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
   const sevRank = (s) => SEV_ORDER.indexOf(s);
@@ -379,15 +380,49 @@
     computeVisible();
     if (nodesView) {
       unclusterAll();
+      const before = network ? network.getPositions() : {};
+      Object.assign(S.posCache, before);
       nodesView.refresh();
       edgesView.refresh();
-      applyClustering();
+      const unseen = restorePositions(before, { settle: false });
+      applyClustering({ settle: true });
+      // clustering settles when it changed something; otherwise settle for never-laid-out nodes
+      if (unseen && !S.clusters.size) settleLayout();
     }
     if (S.layout === "layers") applyLayout(false);
     renderStats(S.data && S.data.stats);
     store.set("hiddenConvs", [...S.hiddenConvs]);
     store.set("hiddenKinds", [...S.hiddenKinds]);
     store.set("hiddenLayers", [...S.hiddenLayers]);
+  }
+
+  // Nodes re-added to a vis DataView lose their coordinates. Put them back where they were (cheaply, on the
+  // body) and only run the physics when some node has never been laid out.
+  function restorePositions(before, { settle = true } = {}) {
+    if (!network || !network.body) return 0;
+    let unseen = 0;
+    for (const id of S.visibleNodes) {
+      if (before[id]) continue;
+      const nd = network.body.nodes[id];
+      const p = S.posCache[id];
+      if (!nd) continue;
+      if (p) { nd.x = p.x; nd.y = p.y; } else unseen++;
+    }
+    if (unseen && settle) settleLayout();
+    else network.redraw();
+    return unseen;
+  }
+  function settleLayout() {
+    if (!network) return;
+    network.setOptions({ physics: { ...physicsOptions(true), stabilization: false } });
+    S.physics = true;
+    updatePhysicsButton();
+    // small views can afford a longer settle; big ones stay responsive
+    network.stabilize(Math.round(Math.min(400, Math.max(120, 30000 / Math.max(1, S.visibleNodes.size)))));
+    network.once("stabilized", () => {
+      if (!S.settings.keep_physics) setPhysics(false);
+      network.fit({ animation: { duration: 300 } });
+    });
   }
 
   /* =========================================================== network */
@@ -967,20 +1002,6 @@
     if (settle && (S.clusters.size || S.justUnclustered)) settleLayout();
     S.justUnclustered = false;
   }
-  // new cluster nodes start at their members' centre; give physics a moment to spread them out
-  function settleLayout() {
-    if (!network) return;
-    network.setOptions({ physics: { ...physicsOptions(true), stabilization: false } });
-    S.physics = true;
-    updatePhysicsButton();
-    // small views can afford a longer settle; big ones stay responsive
-    network.stabilize(Math.round(Math.min(400, Math.max(120, 30000 / Math.max(1, S.visibleNodes.size)))));
-    network.once("stabilized", () => {
-      if (!S.settings.keep_physics) setPhysics(false);
-      network.fit({ animation: { duration: 300 } });
-    });
-  }
-
   function hashColor(key) {
     let h = 0;
     for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
