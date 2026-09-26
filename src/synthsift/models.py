@@ -1,8 +1,8 @@
-"""Normalized, harness-independent transcript model.
+"""Normalized, harness-independent transcript model (pydantic).
 
-Every harness parser converts its native format into these dataclasses.  The
-rest of SynthSift (NLP, graph building, UI) only ever sees this model, so adding
-a new harness never touches anything downstream.
+Every harness parser converts its native format into these models. The rest of
+SynthSift (NLP, graph building, UI) only ever sees this model, so adding a new
+harness never touches anything downstream.
 
     Conversation
       └─ Message (role = user | assistant | system | tool)
@@ -11,15 +11,17 @@ a new harness never touches anything downstream.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 Role = Literal["user", "assistant", "system", "tool"]
 BlockKind = Literal["text", "thinking", "tool_call", "tool_result"]
 
 
-@dataclass
-class Block:
+class Block(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     kind: BlockKind
     text: str = ""
     # tool_call: the call id, tool name and arguments
@@ -48,25 +50,27 @@ class Block:
         return cls(kind="tool_result", text=text, tool_call_id=call_id, tool_name=name, is_error=is_error)
 
 
-@dataclass
-class Message:
+class Message(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     role: Role
-    blocks: list[Block] = field(default_factory=list)
+    blocks: list[Block] = Field(default_factory=list)
     timestamp: str | None = None
     model: str | None = None
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class Conversation:
-    messages: list[Message] = field(default_factory=list)
+class Conversation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    messages: list[Message] = Field(default_factory=list)
     title: str | None = None
     started_at: str | None = None
     model: str | None = None
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
     # Provenance, filled in by the ingester from the zip path
-    # host/user/harness/<file>.  Parsers normally leave these alone.
+    # host/user/harness/<file>. Parsers normally leave these alone.
     id: str = ""
     host: str = "unknown-host"
     user: str = "unknown-user"
