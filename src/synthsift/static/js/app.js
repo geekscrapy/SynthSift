@@ -49,7 +49,7 @@
     textCache: new Map(),
     theme: "light",
     // analyst features
-    filter: store.get("convFilter", { host: "", user: "", harness: "" }),
+    filter: { host: "", user: "", harness: "", conv: "", ...store.get("convFilter", {}) },
     annotations: {},
     tags: [],
     tagFilter: new Set(store.get("tagFilter", [])),
@@ -57,7 +57,6 @@
     flaggedOnly: false,
     secCats: new Set(),
     secMinSev: store.get("secMinSev", "low"),
-    tlFindings: store.get("tlFindings", true),
     dock: store.get("dock", "right"),
     panelOnly: new URLSearchParams(location.search).get("view") === "panel",
     popout: null,
@@ -92,6 +91,11 @@
     await refresh();
     renderTagChips();
     pollStatus();
+    const params = new URLSearchParams(location.search);
+    if (!S.panelOnly && (params.get("select") || params.get("para"))) {
+      reveal(params.get("select"), params.get("para"));
+      history.replaceState(null, "", location.pathname);
+    }
     if (S.panelOnly) {
       broadcast({ type: "hello" });
       window.addEventListener("beforeunload", () => broadcast({ type: "closed" }));
@@ -209,8 +213,17 @@
         case "select": if (S.nodes.has(m.id)) selectNode(m.id, { focus: !S.panelOnly, quiet: !S.panelOnly }); break;
         case "search": $("q").value = m.q || ""; runSearch(m.q || "", S.panelOnly); break;
         case "filters":
-          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = m.filter || S.filter;
+          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = { conv: "", ...(m.filter || S.filter) };
           renderFilters(); afterConvToggle(); break;
+        case "ping": // the Nodes / Timeline pages look for an open graph before opening a new one
+          if (!S.panelOnly) { applyingRemote = false; broadcast({ type: "pong" }); }
+          break;
+        case "reveal":
+          if (S.panelOnly) break;
+          applyingRemote = false;
+          reveal(m.id, m.para);
+          window.focus();
+          break;
         case "tagFilter": S.tagFilter = new Set(m.tags || []); afterTagFilter(); break;
       }
     } finally {
@@ -1289,6 +1302,7 @@
       body,
       el("div", {},
         el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => network && network.focus(n.id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } }) }, icon("center_focus_strong", "sm")),
+        el("a", { class: "icon-btn sm", title: "Open in the Nodes table", href: `/nodes?select=${encodeURIComponent(n.id)}`, target: "synthsift-nodes" }, icon("table_rows", "sm")),
         el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
     box.classList.remove("hidden");
   }
@@ -1311,12 +1325,8 @@
     const nf = visibleFindings().length;
     $("sec-count").textContent = fmt(nf);
     $("sec-count").classList.toggle("hidden", !nf);
-    const nt = timelineRows().length;
-    $("tl-count").textContent = fmt(nt);
-    $("tl-count").classList.toggle("hidden", !nt);
     if (S.tab === "matches") renderMatches();
     else if (S.tab === "security") renderSecurity();
-    else if (S.tab === "timeline") renderTimeline();
     else renderTranscript(opts.scrollTo);
     if (keep !== null && !opts.scrollTo) body.scrollTop = keep;
   }
@@ -1603,76 +1613,37 @@
     if (S.tab === "security") renderPanel({ keepScroll: true });
   }
 
-  /* ========================================================== timeline */
-  function timelineRows() {
-    if (!S.data) return [];
-    const rows = [];
-    for (const [target, a] of Object.entries(S.annotations)) {
-      const kind = target.split(":", 1)[0];
-      let visible = true;
-      if (kind === "term") {
-        const n = S.nodes.get(target.slice(5));
-        visible = n ? !(n.conv || []).length || n.conv.some(convVisible) : (a.conv ? convVisible(a.conv) : true);
-      } else if (a.conv) visible = convVisible(a.conv);
-      if (!visible) continue;
-      if (S.tagFilter.size && !a.tags.some((t) => S.tagFilter.has(t))) continue;
-      rows.push({ kind, target, when: a.ts || tsFor(target) || new Date(a.updated * 1000).toISOString(),
-        label: a.label || labelFor(target), tags: a.tags, comment: a.comment, conv: a.conv || convFor(target) });
-    }
-    if (S.tlFindings && !S.tagFilter.size) {
-      for (const f of visibleFindings()) {
-        const ev = S.events.get(f.event);
-        rows.push({ kind: "finding", target: "event:" + f.event, when: (ev && ev.ts) || "", severity: f.severity,
-          label: `${f.label}: ${f.detail}`, tags: tagsFor("event:" + f.event), comment: "", conv: f.conv });
-      }
-    }
-    rows.sort((a, b) => (a.when || "\uffff").localeCompare(b.when || "\uffff") || a.label.localeCompare(b.label));
-    return rows;
-  }
-
-  const TL_ICON = { conv: "forum", event: "chat", term: "label", finding: "shield" };
-  function renderTimeline() {
-    const body = $("panel-body");
-    body.scrollTop = 0;
-    const rows = timelineRows();
-    const toolbar = el("div", { class: "tl-toolbar" },
-      el("button", { class: `chip sm${S.tlFindings ? " selected" : ""}`, title: "Interleave security findings with tagged rows",
-        onclick: () => { S.tlFindings = !S.tlFindings; store.set("tlFindings", S.tlFindings); renderPanel(); } }, icon("shield", "xs"), "Include findings"),
-      S.tagFilter.size ? el("span", { class: "muted" }, "Filtered to tags: ", el("span", { class: "tag-row", html: tagChipsHTML([...S.tagFilter]) })) : null,
-      el("span", { class: "grow" }),
-      el("button", { class: "btn text sm", onclick: () => exportTimeline(rows) }, icon("download"), "CSV"));
-    if (!rows.length) {
-      body.replaceChildren(toolbar, el("div", { class: "panel-empty" }, icon("timeline"),
-        "Nothing tagged yet. Right-click a node, a turn or a term – or use the tag chips on a selection – to build the timeline."));
-      return;
-    }
-    const tbody = el("tbody");
-    for (const r of rows) {
-      const c = S.convs.get(r.conv);
-      tbody.append(el("tr", { "data-tl": r.target, title: "Click to open · right-click to tag" },
-        el("td", { class: "when" }, r.when ? fmtTime(r.when) : "–"),
-        el("td", { class: "kind", title: r.kind }, r.severity ? el("span", { class: `sev-chip sev-${r.severity}` }, r.severity) : icon(TL_ICON[r.kind] || "sell")),
-        el("td", {}, el("div", { class: "what" }, r.label),
-          el("div", { class: "tag-row", html: tagChipsHTML(r.tags) }),
-          r.comment ? el("div", { class: "cmt" }, r.comment) : null,
-          c ? el("div", { class: "where" }, el("span", { class: "dot", style: { background: c.color } }), `${c.host} / ${c.user} · ${c.title}`) : null)));
-    }
-    body.replaceChildren(toolbar, el("table", { class: "tl-table" },
-      el("thead", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, ""), el("th", {}, "What · where"))), tbody));
-  }
-
-  function exportTimeline(rows) {
-    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lines = [["when", "kind", "severity", "label", "tags", "comment", "host", "user", "conversation", "target"].join(",")];
-    for (const r of rows) {
-      const c = S.convs.get(r.conv) || {};
-      lines.push([r.when, r.kind, r.severity || "", r.label, r.tags.join(" "), r.comment, c.host, c.user, c.title, r.target].map(q).join(","));
-    }
-    const a = el("a", { href: URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })), download: "synthsift-timeline.csv" });
-    document.body.append(a); a.click(); a.remove();
-  }
-
   /* ========================================================= navigation */
+  // show a node / turn / conversation handed over by another page (or ?select=&para=)
+  function reveal(id, para) {
+    if (!S.data) return;
+    if (id && id.startsWith("term:")) id = id.slice(5);
+    if (id && id.startsWith("event:")) id = id.slice(6);
+    const n = id && S.nodes.get(id);
+    const cids = n ? n.conv || [] : para && S.paras.get(para) ? [S.paras.get(para).c] : [];
+    // make sure the thing is not filtered away
+    if (cids.length && !cids.some(convVisible)) {
+      const cid = cids[0];
+      S.hiddenConvs.delete(cid);
+      if (!convMatchesFilter(cid)) S.filter = { host: "", user: "", harness: "", conv: "" };
+      store.set("convFilter", S.filter);
+      renderFilters();
+      afterConvToggle();
+    }
+    if (n && (S.hiddenLayers.has(n.layer) || S.hiddenKinds.has(kindKey(n)))) {
+      S.hiddenLayers.delete(n.layer);
+      S.hiddenKinds.delete(kindKey(n));
+      applyFilters(); renderLegend(); renderLayers();
+    }
+    if (n) {
+      selectNode(id, { focus: true });
+      if (para && S.paras.has(para)) { S.currentConv = S.paras.get(para).c; setTab("transcript", { scrollTo: para }); }
+    } else if (id && id.startsWith("conv:")) jumpToTarget(id);
+    else if (id && S.events.has(id)) jumpToEvent(id);
+    else if (para && S.paras.has(para)) { S.currentConv = S.paras.get(para).c; setTab("transcript", { scrollTo: para }); }
+    else snack("That item is not in the current graph (filtered or below the minimum mentions).");
+  }
+
   function jumpToEvent(evId) {
     const ev = S.events.get(evId);
     if (!ev) return;
@@ -1706,8 +1677,6 @@
     if (tm) { const r = tm.getBoundingClientRect(); openTagMenu(tm.dataset.tagmenu, r.left, r.bottom + 4); return; }
     const fr = t.closest("[data-finding]");
     if (fr) { const f = S.data.findings[Number(fr.dataset.finding)]; if (f) jumpToEvent(f.event); return; }
-    const tl = t.closest("[data-tl]");
-    if (tl) { jumpToTarget(tl.dataset.tl); return; }
     const ent = t.closest(".ent");
     if (ent) {
       selectNode(ent.dataset.node, { focus: true, quiet: false });
@@ -1904,7 +1873,7 @@
     $("tag-count").textContent = fmt(Object.keys(S.annotations).length);
     const chips = S.tags.map((t) => el("button", {
       class: `chip sm tagf${S.tagFilter.has(t.name) ? " selected" : ""}${counts.get(t.name) ? "" : " muted-chip"}`,
-      style: { "--tag": t.color }, title: `Show only items tagged “${t.name}” (graph fades the rest, timeline filters)`,
+      style: { "--tag": t.color }, title: `Show only items tagged “${t.name}” (graph fades the rest; the Nodes and Timeline pages filter)`,
       onclick: () => { S.tagFilter.has(t.name) ? S.tagFilter.delete(t.name) : S.tagFilter.add(t.name); store.set("tagFilter", [...S.tagFilter]); afterTagFilter(); },
       oncontextmenu: (e) => {
         e.preventDefault();
@@ -1923,7 +1892,6 @@
   function afterTagFilter() {
     renderTagChips();
     network && network.redraw();
-    if (S.tab === "timeline") renderTimeline();
     broadcast({ type: "tagFilter", tags: [...S.tagFilter] });
   }
 
@@ -2401,23 +2369,22 @@
         S.filter = { ...S.filter, [key]: e.target.value };
         if (key === "host") { S.filter.user = ""; S.filter.harness = ""; }
         if (key === "user") S.filter.harness = "";
+        S.filter.conv = "";
         store.set("convFilter", S.filter);
         renderFilters();
         afterConvToggle();
       });
     }
-    // right-click tagging: graph, transcript / matches / findings / timeline, conversation tree
+    // right-click tagging: graph, transcript / matches / findings, conversation tree
     $("graph").addEventListener("contextmenu", (e) => e.preventDefault());
     $("panel-body").addEventListener("contextmenu", (e) => {
       const t = e.target;
       let target = null;
       const ent = t.closest(".ent");
-      const tl = t.closest("[data-tl]");
       const fr = t.closest("[data-finding]");
       const msg = t.closest("[data-event]");
       const para = t.closest("[data-pid]");
       if (ent) target = "term:" + ent.dataset.node;
-      else if (tl) target = tl.dataset.tl;
       else if (fr) target = "event:" + S.data.findings[Number(fr.dataset.finding)].event;
       else if (msg) target = "event:" + msg.dataset.event;
       else if (para && S.paras.get(para.dataset.pid)) target = "event:" + S.paras.get(para.dataset.pid).e;
