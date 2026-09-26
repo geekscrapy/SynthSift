@@ -3,10 +3,17 @@
 Status: placeholder shell – registered so the UI can list it, but ``parse`` is
 not written yet.
 
-The on-disk format is not documented here yet.  Drop a sample export into the
-``antigravity`` folder of an upload zip, inspect it, then map agent steps to
-``assistant`` messages, plans/reasoning to ``thinking`` blocks and tool / browser
-actions to ``tool_call`` + ``tool_result`` blocks.
+Google does not document where the Antigravity IDE stores conversations, so
+there is no confirmed on-disk location yet.  The CLI keeps its configuration in
+``~/.gemini/antigravity-cli/``.  The documented capture is headless mode::
+
+    agy -p "…" --output-format stream-json > run.jsonl
+
+which prints NDJSON events: one ``init``, any number of ``step_update`` (text
+deltas, tool calls, token usage) and one ``result``.  That stream is the most
+reliable input to implement against: map text deltas to ``assistant``
+messages, reasoning to ``thinking`` blocks and tool / browser actions to
+``tool_call`` + ``tool_result`` blocks.
 """
 
 from __future__ import annotations
