@@ -45,12 +45,24 @@
           <button class="icon-btn sm" id="conv-none" title="Hide all conversations"><span class="msi">check_box_outline_blank</span></button>
           <button class="icon-btn sm" id="conv-expand" title="Expand / collapse all"><span class="msi">unfold_less</span></button>
         </div>
+        <div class="filter-row" id="filter-row">
+          <label class="mini-select" title="Filter by host"><span class="msi xs">computer</span><select id="f-host"></select></label>
+          <label class="mini-select" title="Filter by user"><span class="msi xs">person</span><select id="f-user"></select></label>
+          <label class="mini-select" title="Filter by agent / harness"><span class="msi xs">terminal</span><select id="f-harness"></select></label>
+        </div>
         <label class="search compact">
           <span class="msi sm">travel_explore</span>
           <input id="conv-q" type="search" placeholder="Find conversations containing…" autocomplete="off">
           <button class="icon-btn sm hidden" id="conv-only" title="Show only matching conversations in the graph"><span class="msi">filter_list</span></button>
         </label>
         <div class="tree" id="tree"></div>
+      </section>
+      <section class="section tags-section">
+        <div class="section-title"><div class="grow">Tags <span class="badge soft" id="tag-count">0</span></div>
+          <button class="icon-btn sm" id="tag-new" title="New custom tag"><span class="msi">add</span></button>
+          <button class="icon-btn sm" id="tag-clear" title="Clear tag filter"><span class="msi">filter_list_off</span></button>
+        </div>
+        <div class="chip-row tag-chips" id="tag-chips"></div>
       </section>
       <section class="section legend-section">
         <div class="section-title"><div class="grow">Node types</div>
@@ -68,6 +80,10 @@
       <div id="graph"></div>
       <div class="graph-toolbar">
         <div class="layer-chips" id="layers" role="group" aria-label="Layers"></div>
+        <div class="layer-chips">
+          <button class="chip" id="t-flagged" title="Fade everything without a security finding"><span class="msi sm">shield</span>Flagged</button>
+        </div>
+        <button class="chip popped-note hidden" id="popped-note" title="Bring the transcript panel back into this window"><span class="msi sm">dock_to_right</span>Panel is in another window – dock back</button>
       </div>
       <div class="fab-stack">
         <button class="icon-btn" id="z-in" title="Zoom in"><span class="msi">zoom_in</span></button>
@@ -96,10 +112,13 @@
     <aside class="panel" id="right">
       <div class="panel-head">
         <div class="tabs">
-          <button class="tab on" data-tab="transcript"><span class="msi sm">forum</span>Transcript</button>
-          <button class="tab" data-tab="matches"><span class="msi sm">format_list_bulleted</span>Matches <span class="badge soft hidden" id="match-count">0</span></button>
+          <button class="tab on" data-tab="transcript"><span class="msi sm">forum</span><span class="tab-label">Transcript</span></button>
+          <button class="tab" data-tab="matches"><span class="msi sm">format_list_bulleted</span><span class="tab-label">Matches</span> <span class="badge soft hidden" id="match-count">0</span></button>
+          <button class="tab" data-tab="security"><span class="msi sm">shield</span><span class="tab-label">Security</span> <span class="badge sev hidden" id="sec-count">0</span></button>
+          <button class="tab" data-tab="timeline"><span class="msi sm">timeline</span><span class="tab-label">Timeline</span> <span class="badge soft hidden" id="tl-count">0</span></button>
           <span class="spacer"></span>
           <button class="icon-btn sm" id="underline-toggle" title="Underline extracted entities"><span class="msi">label</span></button>
+          <button class="icon-btn sm" id="btn-dock" title="Dock position / open in new window"><span class="msi">dock_to_right</span></button>
         </div>
         <div class="ctx-controls" id="ctx-controls">
           <span>Context</span>

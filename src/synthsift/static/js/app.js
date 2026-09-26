@@ -48,7 +48,25 @@
     pointer: { x: 0, y: 0 },
     textCache: new Map(),
     theme: "light",
+    // analyst features
+    filter: store.get("convFilter", { host: "", user: "", harness: "" }),
+    annotations: {},
+    tags: [],
+    tagFilter: new Set(store.get("tagFilter", [])),
+    hideIgnored: store.get("hideIgnored", true),
+    flaggedOnly: false,
+    secCats: new Set(),
+    secMinSev: store.get("secMinSev", "low"),
+    tlFindings: store.get("tlFindings", true),
+    dock: store.get("dock", "right"),
+    panelOnly: new URLSearchParams(location.search).get("view") === "panel",
+    popout: null,
   };
+  const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
+  const sevRank = (s) => SEV_ORDER.indexOf(s);
+  const SEV_COLOR = { critical: "#A50E0E", high: "#D93025", medium: "#E37400", low: "#B08800", info: "#5F6368" };
+  const chan = "BroadcastChannel" in window ? new BroadcastChannel("synthsift") : null;
+  const WIN_ID = Math.random().toString(36).slice(2);
 
   let network = null;
   let nodesDS = null;
@@ -58,6 +76,7 @@
 
   /* ================================================================ boot */
   async function boot() {
+    if (S.panelOnly) { document.body.classList.add("panel-only"); document.title = "SynthSift – transcript"; }
     wireUI();
     try {
       const st = await api("/api/settings");
@@ -66,8 +85,14 @@
       snack("Could not load settings: " + e.message);
     }
     applyViewSettings();
+    await loadAnnotations();
     await refresh();
+    renderTagChips();
     pollStatus();
+    if (S.panelOnly) {
+      broadcast({ type: "hello" });
+      window.addEventListener("beforeunload", () => broadcast({ type: "closed" }));
+    }
     document.fonts && document.fonts.ready.then(() => network && network.redraw());
   }
 
@@ -89,7 +114,107 @@
     $("panel-body").classList.toggle("no-underline", !S.underline);
     $("t-labels").classList.toggle("on", S.labels);
     for (const b of $("layout-toggle").querySelectorAll("button")) b.classList.toggle("on", b.dataset.layout === S.layout);
+    applyDock();
+    document.documentElement.style.setProperty("--bottom-h", store.get("bottomHeight", 320) + "px");
   }
+
+  /* ============================================================ docking */
+  const DOCK_ICON = { right: "dock_to_right", left: "dock_to_left", bottom: "dock_to_bottom" };
+  function applyDock() {
+    if (S.panelOnly) return;
+    const L = $("layout");
+    L.classList.toggle("dock-left", S.dock === "left");
+    L.classList.toggle("dock-bottom", S.dock === "bottom");
+    $("btn-dock").querySelector(".msi").textContent = DOCK_ICON[S.dock] || "dock_to_right";
+    $("popped-note").querySelector(".msi").textContent = DOCK_ICON[S.dock] || "dock_to_right";
+  }
+  function setDock(d) {
+    S.dock = d;
+    store.set("dock", d);
+    if (S.popout) dockBack();
+    $("layout").classList.remove("right-closed");
+    store.set("rightClosed", false);
+    applyDock();
+    refitSoon();
+  }
+  function refitSoon() {
+    if (!network) return;
+    setTimeout(() => { network.redraw(); network.fit({ animation: { duration: 300 } }); }, 80);
+  }
+  function dockMenu(anchor) {
+    closeMenus();
+    const item = (ic, label, run, on) => el("button", { onclick: () => { menu.remove(); run(); } }, icon(on ? "radio_button_checked" : ic), el("span", { class: "grow" }, label));
+    const menu = el("div", { class: "menu" },
+      item("dock_to_right", "Dock right", () => setDock("right"), S.dock === "right" && !S.popout),
+      item("dock_to_left", "Dock left", () => setDock("left"), S.dock === "left" && !S.popout),
+      item("dock_to_bottom", "Dock bottom", () => setDock("bottom"), S.dock === "bottom" && !S.popout),
+      item("open_in_new", "Open in a new window", popOut, !!S.popout));
+    const r = anchor.getBoundingClientRect();
+    placeMenu(menu, r.right - 240, r.bottom + 4);
+  }
+  function popOut() {
+    if (S.panelOnly) return;
+    const w = window.open("/?view=panel", "synthsift-panel", "width=640,height=920");
+    if (!w) { snack("The browser blocked the new window – allow pop-ups for this page."); return; }
+    S.popout = w;
+    $("layout").classList.add("popped");
+    $("popped-note").classList.remove("hidden");
+    refitSoon();
+    // watch for the window being closed without a goodbye message
+    clearInterval(S.popWatch);
+    S.popWatch = setInterval(() => { if (S.popout && S.popout.closed) dockBack(); }, 1000);
+  }
+  function dockBack() {
+    clearInterval(S.popWatch);
+    if (S.popout && !S.popout.closed) S.popout.close();
+    S.popout = null;
+    $("layout").classList.remove("popped");
+    $("popped-note").classList.add("hidden");
+    renderPanel({ keepScroll: true });
+    refitSoon();
+  }
+
+  /* ======================================================= window sync */
+  let applyingRemote = false;
+  function broadcast(msg) {
+    if (!chan || applyingRemote) return;
+    chan.postMessage({ ...msg, from: WIN_ID });
+  }
+  function sharedState() {
+    return { type: "state", currentConv: S.currentConv, selected: S.selected, q: $("q").value, hiddenConvs: [...S.hiddenConvs],
+      filter: S.filter, tagFilter: [...S.tagFilter], hideIgnored: S.hideIgnored, tab: S.tab };
+  }
+  async function onRemote(m) {
+    if (!m || m.from === WIN_ID) return;
+    if (m.type === "annotations") { await loadAnnotations(); afterAnnotationChange(); return; }
+    applyingRemote = true;
+    try {
+      switch (m.type) {
+        case "hello":
+          if (!S.panelOnly) { applyingRemote = false; broadcast(sharedState()); }
+          break;
+        case "closed": if (!S.panelOnly && S.popout) dockBack(); break;
+        case "state":
+          if (!S.panelOnly) break;
+          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = m.filter || S.filter;
+          S.tagFilter = new Set(m.tagFilter || []); S.hideIgnored = !!m.hideIgnored;
+          if (m.currentConv) S.currentConv = m.currentConv;
+          applyFilters(); renderFilters(); renderTagChips();
+          if (m.q) { $("q").value = m.q; runSearch(m.q, false); }
+          if (m.selected && S.nodes.has(m.selected)) selectNode(m.selected); else setTab(m.tab && m.tab !== "matches" ? m.tab : "transcript");
+          break;
+        case "select": if (S.nodes.has(m.id)) selectNode(m.id, { focus: !S.panelOnly, quiet: !S.panelOnly }); break;
+        case "search": $("q").value = m.q || ""; runSearch(m.q || "", S.panelOnly); break;
+        case "filters":
+          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = m.filter || S.filter;
+          renderFilters(); afterConvToggle(); break;
+        case "tagFilter": S.tagFilter = new Set(m.tags || []); afterTagFilter(); break;
+      }
+    } finally {
+      applyingRemote = false;
+    }
+  }
+  if (chan) chan.onmessage = (e) => onRemote(e.data);
 
   /* ============================================================ status */
   let polling = null;
@@ -151,8 +276,10 @@
     $("empty").classList.add("hidden");
     const first = S.version < 0 || !S.data;
     ingest(g);
-    buildNetwork();
+    renderFilters();
+    if (S.panelOnly) computeVisible(); else buildNetwork();
     renderTree();
+    renderTagChips();
     renderLegend();
     renderLayers();
     renderStats(g.stats);
@@ -215,7 +342,13 @@
     return k;
   }
   const kindOf = (n) => S.kinds.get(kindKey(n)) || customKind(kindKey(n));
-  const convVisible = (c) => !S.hiddenConvs.has(c);
+  function convMatchesFilter(cid) {
+    const c = S.convs.get(cid);
+    if (!c) return false;
+    const f = S.filter;
+    return (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness);
+  }
+  const convVisible = (c) => !S.hiddenConvs.has(c) && convMatchesFilter(c);
 
   /* =========================================================== filters */
   function computeVisible() {
@@ -224,6 +357,7 @@
       if (n.conv && n.conv.length && !n.conv.some(convVisible)) continue;
       if (S.hiddenLayers.has(n.layer)) continue;
       if (S.hiddenKinds.has(kindKey(n))) continue;
+      if (S.hideIgnored && nodeTags(n.id).includes("ignore")) continue;
       vis.add(n.id);
     }
     // entities left without any visible connection are hidden too
@@ -287,9 +421,37 @@
   }
 
   function isDimmed(id) {
-    if (S.neighbors && !S.neighbors.has(id)) return true;
-    if (S.search && S.search.nodeIds.size && !S.search.nodeIds.has(id) && !S.neighbors) return true;
+    if (S.neighbors) return !S.neighbors.has(id);
+    if (S.search && S.search.nodeIds.size && !S.search.nodeIds.has(id)) return true;
+    if (S.tagFilter.size && !nodeTags(id).some((t) => S.tagFilter.has(t))) return true;
+    if (S.flaggedOnly && !(S.nodes.get(id) || {}).sec) return true;
     return false;
+  }
+
+  // severity ring + tag dots, drawn on top of a node
+  function drawBadges(ctx, n, x, y, shape) {
+    if (n.sec) {
+      ctx.save();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = SEV_COLOR[n.sec] || SEV_COLOR.medium;
+      if (shape.r) { ctx.beginPath(); ctx.arc(x, y, shape.r + 3, 0, 2 * Math.PI); }
+      else roundRect(ctx, shape.left - 3, shape.top - 3, shape.w + 6, shape.h + 6, shape.radius + 3);
+      ctx.stroke();
+      ctx.restore();
+    }
+    const tags = nodeTags(n.id);
+    if (!tags.length) return;
+    const cx0 = shape.r ? x + shape.r * 0.75 : shape.left + shape.w - 2;
+    const cy = shape.r ? y - shape.r * 0.75 : shape.top + 1;
+    tags.slice(0, 3).forEach((t, i) => {
+      ctx.beginPath();
+      ctx.arc(cx0 - i * 7, cy, 4.5, 0, 2 * Math.PI);
+      ctx.fillStyle = tagInfo(t).color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = GC.surface;
+      ctx.stroke();
+    });
   }
 
   function measure(ctx, text, font) {
@@ -328,6 +490,7 @@
           if (n.layer === "thought") ctx.setLineDash([3, 3]);
           ctx.stroke();
           ctx.setLineDash([]);
+          drawBadges(ctx, n, x, y, { r });
           if (r >= 9 && scale * r > 5) {
             ctx.font = `${Math.round(r * 1.15)}px "Material Symbols Outlined"`;
             ctx.fillStyle = "#ffffff";
@@ -383,6 +546,7 @@
           if (n.type === "thought") { ctx.setLineDash([4, 3]); ctx.lineWidth = 2; ctx.strokeStyle = GC.surface; ctx.stroke(); ctx.setLineDash([]); }
           if (n.error) { ctx.lineWidth = 3; ctx.strokeStyle = "#d93025"; ctx.stroke(); }
         }
+        drawBadges(ctx, n, x, y, { left, top, w, h, radius: n.type === "conversation" || small ? h / 2 : 8 });
         if (lod) { ctx.restore(); return; }
         const ink = small ? GC.ink : "#ffffff";
         ctx.fillStyle = small ? color : ink;
@@ -450,6 +614,11 @@
         break;
       case "alias":
         style = { width: 1, dashes: [2, 4], color: col(S.kinds.get("file_path")?.color || "#5f6368", 0.8), label: labels === "all" ? e.label : undefined };
+        break;
+      case "dataflow":
+        style = { width: 3.5, color: col(SEV_COLOR[e.sev] || SEV_COLOR.medium, 0.95), label: e.label,
+          arrows: { to: { enabled: true, scaleFactor: 0.9 } },
+          font: { size: 12, color: SEV_COLOR[e.sev] || SEV_COLOR.medium, strokeWidth: 4, strokeColor: GC.surface, bold: { mod: "bold" } } };
         break;
       case "cooccurs":
         style = { width: Math.min(4, 0.5 + Math.log2(e.w || 1)), dashes: [1, 4], color: col(GC.outline, 0.5), arrows: "" };
@@ -541,6 +710,15 @@
       if (!S.settings.keep_physics) setPhysics(false);
     });
     network.on("click", onClick);
+    network.on("oncontext", (p) => {
+      const id = network.getNodeAt(p.pointer.DOM);
+      if (p.event && p.event.preventDefault) p.event.preventDefault();
+      const target = id && targetOf(id);
+      if (!target) return;
+      const r = $("graph").getBoundingClientRect();
+      hideTip();
+      openTagMenu(target, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y);
+    });
     network.on("doubleClick", (p) => { if (p.nodes.length) network.focus(p.nodes[0], { scale: Math.max(1.2, network.getScale()), animation: { duration: 500 } }); });
     network.on("hoverNode", (p) => showNodeTip(p.node));
     network.on("blurNode", hideTip);
@@ -775,6 +953,7 @@
     const eventsHit = new Set(occ.map(([pid]) => S.paras.get(pid).e));
     S.matchSource = { kind: "node", id, title: n.label, occ };
     if (quiet) { renderPanel(); return; }
+    broadcast({ type: "select", id });
     if (eventsHit.size <= 1 && occ.length) {
       const pid = occ[0][0];
       S.currentConv = S.paras.get(pid).c;
@@ -796,6 +975,22 @@
     renderPanel();
   }
 
+  function findingsForNode(id) {
+    const fs = (S.data && S.data.findings) || [];
+    const n = S.nodes.get(id);
+    if (!n) return [];
+    if (n.type === "entity") {
+      const key = id.replace(/^ent:/, "");
+      return fs.filter((f) => f.entities.includes(key) || f.chain.some((c) => c[0] === key || c[2] === key));
+    }
+    if (n.type === "conversation") return fs.filter((f) => f.conv === n.conv[0]);
+    const ev = n.type === "tool_arg" ? n.event : id;
+    return fs.filter((f) => f.event === ev);
+  }
+  function findingsForEvent(evId) {
+    return ((S.data && S.data.findings) || []).filter((f) => f.event === evId);
+  }
+
   function renderSelection() {
     const box = $("selection");
     const n = S.selected && S.nodes.get(S.selected);
@@ -812,6 +1007,27 @@
     if (n.type === "tool_call") {
       const ev = S.events.get(n.event);
       if (ev) body.append(el("div", { class: "args" }, ev.p.map((pid) => S.paras.get(pid).t).join("\n")));
+    }
+    // security findings touching this node
+    const fs = findingsForNode(n.id);
+    if (fs.length) {
+      body.append(el("div", { class: "sel-findings" }, fs.slice(0, 6).map((f) =>
+        el("div", { class: `f sev-${f.severity}` }, el("span", { class: "sev-chip" }, f.severity), el("span", {}, f.label + " – " + f.detail)))));
+    }
+    // tags as one-click toggles + a comment box
+    const target = targetOf(n.id);
+    if (target) {
+      const cur = new Set(tagsFor(target));
+      const chips = el("div", { class: "chip-row sel-tags" }, S.tags.map((t) => el("button", {
+        class: `chip sm${cur.has(t.name) ? " on" : ""}`, style: { "--tag": t.color }, title: `Tag as ${t.name}`,
+        role: "checkbox", "aria-checked": cur.has(t.name) ? "true" : "false",
+        onclick: () => toggleTag(target, t.name),
+      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), t.name)),
+        el("button", { class: "chip sm", title: "More tags / new tag", onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); openTagMenu(target, r.left, r.bottom + 4); } }, icon("more_horiz"), "More"));
+      const ta = el("textarea", { class: "text-input sel-comment", placeholder: "Analyst comment (saved when you leave the box)…" });
+      ta.value = (annOf(target) || {}).comment || "";
+      ta.addEventListener("change", () => saveAnnotation(target, [...tagsFor(target)], ta.value));
+      body.append(chips, ta);
     }
     box.replaceChildren(
       el("span", { class: "ico", style: { background: n.type === "conversation" && convs[0] ? convs[0].color : k.color } }, icon(k.icon)),
@@ -831,12 +1047,23 @@
   }
 
   function renderPanel(opts = {}) {
+    const body = $("panel-body");
+    const keep = opts.keepScroll ? body.scrollTop : null;
     const count = S.matchSource ? new Set(S.matchSource.occ.map((o) => o[0])).size : 0;
     const badge = $("match-count");
     badge.textContent = fmt(count);
     badge.classList.toggle("hidden", !S.matchSource);
+    const nf = visibleFindings().length;
+    $("sec-count").textContent = fmt(nf);
+    $("sec-count").classList.toggle("hidden", !nf);
+    const nt = timelineRows().length;
+    $("tl-count").textContent = fmt(nt);
+    $("tl-count").classList.toggle("hidden", !nt);
     if (S.tab === "matches") renderMatches();
+    else if (S.tab === "security") renderSecurity();
+    else if (S.tab === "timeline") renderTimeline();
     else renderTranscript(opts.scrollTo);
+    if (keep !== null && !opts.scrollTo) body.scrollTop = keep;
   }
 
   // marks for a paragraph: selection occurrences + search hits
@@ -869,7 +1096,10 @@
       const ent = active.find((r) => r[2] === "ent");
       if (ent) {
         const n = S.nodes.get(ent[3]);
-        seg = `<span class="ent" data-node="${esc(ent[3])}" style="--ent-c:${kindOf(n).color}" title="${esc(kindOf(n).label)}: ${esc(n.label)}">${seg}</span>`;
+        const tt = tagsFor("term:" + ent[3]);
+        const tstyle = tt.length ? `;--tagc:${esc(tagInfo(tt[0]).color)}` : "";
+        const ttitle = tt.length ? ` · tags: ${tt.join(", ")}` : "";
+        seg = `<span class="ent${tt.length ? " tagged" : ""}" data-node="${esc(ent[3])}" style="--ent-c:${kindOf(n).color}${tstyle}" title="${esc(kindOf(n).label)}: ${esc(n.label)}${esc(ttitle)} (right-click to tag)">${seg}</span>`;
       }
       if (active.some((r) => r[2] === "argkey")) seg = `<span class="argkey">${seg}</span>`;
       html += seg;
@@ -931,10 +1161,21 @@
     for (const ev of evs.slice(from, to)) {
       const long = ev.type === "tool_result" && collapse && ev.p.reduce((a, pid) => a + S.paras.get(pid).t.length, 0) > 700;
       const hasMark = scrollTo && ev.p.includes(scrollTo);
-      const cls = `msg ${ev.type}${ev.error ? " error" : ""}${long && !hasMark ? " collapsed" : ""}`;
-      html += `<div class="${cls}" data-event="${esc(ev.id)}"><div class="msg-head">${avatar(ev.type)}<span class="who">${esc(ev.label)}</span>` +
+      const evTarget = "event:" + ev.id;
+      const tags = tagsFor(evTarget);
+      const ann = annOf(evTarget);
+      const fsEv = findingsForEvent(ev.id);
+      const worst = fsEv.reduce((a, f) => (sevRank(f.severity) > sevRank(a) ? f.severity : a), "");
+      const tagCls = tags.includes("bad") ? " tagged-bad" : tags.includes("suspicious") ? " tagged-suspicious" : "";
+      const cls = `msg ${ev.type}${ev.error ? " error" : ""}${long && !hasMark ? " collapsed" : ""}${tagCls}`;
+      html += `<div class="${cls}" data-event="${esc(ev.id)}" style="--tagc:${tags.length ? esc(tagInfo(tags[0]).color) : "transparent"}"><div class="msg-head">${avatar(ev.type)}<span class="who">${esc(ev.label)}</span>` +
+        (worst ? `<span class="sev-chip sev-${worst}" title="${esc(fsEv.map((f) => f.label).join("; "))}">${worst}</span>` : "") +
+        `<span class="tag-row">${tagChipsHTML(tags)}</span>` +
         (ev.call_id ? `<span class="tag mono">${esc(ev.call_id)}</span>` : "") +
-        `<span class="ts">${fmtTime(ev.ts)}</span><button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button></div>` +
+        `<span class="ts">${fmtTime(ev.ts)}</span>` +
+        `<button class="icon-btn sm tagbtn${tags.length || (ann && ann.comment) ? " has" : ""}" data-tagmenu="${esc(evTarget)}" title="Tag or comment on this turn (or right-click it)"><span class="msi xs">sell</span></button>` +
+        `<button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button></div>` +
+        (ann && ann.comment ? `<div class="comment-note"><span class="msi">comment</span>${esc(ann.comment)}</div>` : "") +
         `<div class="msg-body">${ev.p.map((pid) => paraHTML(S.paras.get(pid))).join("")}</div>` +
         (long && !hasMark ? `<button class="btn text sm expand-btn" data-expand="1"><span class="msi">expand_more</span>Show full result</button>` : "") + `</div>`;
     }
@@ -1025,8 +1266,193 @@
     body.scrollTop = 0;
   }
 
+  /* ========================================================== security */
+  const ignored = (target) => tagsFor(target).includes("ignore");
+  function visibleFindings() {
+    const fs = (S.data && S.data.findings) || [];
+    const min = sevRank(S.secMinSev);
+    return fs.map((f, i) => ({ ...f, i })).filter((f) =>
+      convVisible(f.conv) && sevRank(f.severity) >= min && (!S.secCats.size || S.secCats.has(f.category)) &&
+      !(S.hideIgnored && (ignored("event:" + f.event) || ignored("conv:" + f.conv))));
+  }
+  function endpointLabel(key) {
+    const n = S.nodes.get("ent:" + key);
+    if (n) return n.label;
+    const ev = S.events.get(key);
+    return ev ? ev.label : key;
+  }
+  function chainEl(chain) {
+    const box = el("div", { class: "chain" });
+    chain.forEach(([src, action, dst], i) => {
+      if (i === 0) box.append(el("span", { class: "node", title: endpointLabel(src) }, endpointLabel(src)));
+      box.append(el("span", { class: "arrow" }, action, icon("arrow_forward")));
+      box.append(el("span", { class: "node", title: endpointLabel(dst) }, endpointLabel(dst)));
+    });
+    return box;
+  }
+
+  function renderSecurity() {
+    const body = $("panel-body");
+    body.scrollTop = 0;
+    const all = (S.data && S.data.findings) || [];
+    const cats = (S.data && S.data.security && S.data.security.categories) || {};
+    const shown = visibleFindings();
+    const bySev = new Map();
+    for (const f of all) if (convVisible(f.conv)) bySev.set(f.severity, (bySev.get(f.severity) || 0) + 1);
+    const catCounts = new Map();
+    for (const f of all) if (convVisible(f.conv)) catCounts.set(f.category, (catCounts.get(f.category) || 0) + 1);
+    const toolbar = el("div", { class: "sec-toolbar" },
+      el("div", { class: "sec-summary" }, [...SEV_ORDER].reverse().filter((sv) => bySev.get(sv)).map((sv) => el("button", {
+        class: `chip sm sev-${sv}${S.secMinSev === sv ? " selected" : ""}`, title: `Show ${sv} and above`,
+        onclick: () => { S.secMinSev = sv; store.set("secMinSev", sv); renderPanel(); },
+      }, el("span", { class: "sev-chip" }, sv), el("span", { class: "count" }, fmt(bySev.get(sv)))))),
+      el("div", { class: "chip-row" }, Object.entries(cats).filter(([k]) => catCounts.get(k)).map(([k, label]) => el("button", {
+        class: `chip sm${S.secCats.has(k) ? " selected" : ""}`,
+        onclick: () => { S.secCats.has(k) ? S.secCats.delete(k) : S.secCats.add(k); renderPanel(); },
+      }, label, el("span", { class: "count" }, fmt(catCounts.get(k)))))),
+      el("button", { class: `chip sm${S.flaggedOnly ? " selected" : ""}`, onclick: () => setFlaggedOnly(!S.flaggedOnly) },
+        icon("shield", "xs"), "Fade unflagged in graph"));
+    if (!shown.length) {
+      body.replaceChildren(toolbar, el("div", { class: "panel-empty" }, icon("verified_user"),
+        all.length ? "No findings match the current filters." : "No security findings in the visible conversations."));
+      return;
+    }
+    shown.sort((a, b) => sevRank(b.severity) - sevRank(a.severity) || S.convOrder.indexOf(a.conv) - S.convOrder.indexOf(b.conv)
+      || (S.events.get(a.event)?.seq ?? 0) - (S.events.get(b.event)?.seq ?? 0));
+    const frag = document.createDocumentFragment();
+    frag.append(toolbar);
+    for (const f of shown.slice(0, 500)) {
+      const c = S.convs.get(f.conv);
+      const ev = S.events.get(f.event);
+      const tags = tagsFor("event:" + f.event);
+      const row = el("div", { class: `finding sev-${f.severity}`, "data-finding": f.i, title: "Click to open · right-click to tag" },
+        el("span", { class: "sev-chip" }, f.severity),
+        el("span", { class: "f-title" }, f.label, el("span", { class: "muted" }, " · " + (cats[f.category] || f.category))),
+        el("span", { class: "f-detail" }, f.detail),
+        f.chain.length ? chainEl(f.chain) : null,
+        el("div", { class: "f-meta" },
+          c ? el("span", { class: "dot", style: { width: "8px", height: "8px", borderRadius: "50%", background: c.color, display: "inline-block" } }) : null,
+          c ? `${c.host} / ${c.user} · ${c.title}` : f.conv,
+          ev ? ` · ${ev.label}` : "", ev && ev.ts ? ` · ${fmtTime(ev.ts)}` : "",
+          el("span", { class: "tag-row", html: tagChipsHTML(tags) })));
+      frag.append(row);
+    }
+    if (shown.length > 500) frag.append(el("div", { class: "more-note" }, `Showing 500 of ${fmt(shown.length)} findings`));
+    body.replaceChildren(frag);
+  }
+
+  function setFlaggedOnly(on) {
+    S.flaggedOnly = on;
+    $("t-flagged").classList.toggle("selected", on);
+    network && network.redraw();
+    if (S.tab === "security") renderPanel({ keepScroll: true });
+  }
+
+  /* ========================================================== timeline */
+  function timelineRows() {
+    if (!S.data) return [];
+    const rows = [];
+    for (const [target, a] of Object.entries(S.annotations)) {
+      const kind = target.split(":", 1)[0];
+      let visible = true;
+      if (kind === "term") {
+        const n = S.nodes.get(target.slice(5));
+        visible = n ? !(n.conv || []).length || n.conv.some(convVisible) : (a.conv ? convVisible(a.conv) : true);
+      } else if (a.conv) visible = convVisible(a.conv);
+      if (!visible) continue;
+      if (S.tagFilter.size && !a.tags.some((t) => S.tagFilter.has(t))) continue;
+      rows.push({ kind, target, when: a.ts || tsFor(target) || new Date(a.updated * 1000).toISOString(),
+        label: a.label || labelFor(target), tags: a.tags, comment: a.comment, conv: a.conv || convFor(target) });
+    }
+    if (S.tlFindings && !S.tagFilter.size) {
+      for (const f of visibleFindings()) {
+        const ev = S.events.get(f.event);
+        rows.push({ kind: "finding", target: "event:" + f.event, when: (ev && ev.ts) || "", severity: f.severity,
+          label: `${f.label}: ${f.detail}`, tags: tagsFor("event:" + f.event), comment: "", conv: f.conv });
+      }
+    }
+    rows.sort((a, b) => (a.when || "\uffff").localeCompare(b.when || "\uffff") || a.label.localeCompare(b.label));
+    return rows;
+  }
+
+  const TL_ICON = { conv: "forum", event: "chat", term: "label", finding: "shield" };
+  function renderTimeline() {
+    const body = $("panel-body");
+    body.scrollTop = 0;
+    const rows = timelineRows();
+    const toolbar = el("div", { class: "tl-toolbar" },
+      el("button", { class: `chip sm${S.tlFindings ? " selected" : ""}`, title: "Interleave security findings with tagged rows",
+        onclick: () => { S.tlFindings = !S.tlFindings; store.set("tlFindings", S.tlFindings); renderPanel(); } }, icon("shield", "xs"), "Include findings"),
+      S.tagFilter.size ? el("span", { class: "muted" }, "Filtered to tags: ", el("span", { class: "tag-row", html: tagChipsHTML([...S.tagFilter]) })) : null,
+      el("span", { class: "grow" }),
+      el("button", { class: "btn text sm", onclick: () => exportTimeline(rows) }, icon("download"), "CSV"));
+    if (!rows.length) {
+      body.replaceChildren(toolbar, el("div", { class: "panel-empty" }, icon("timeline"),
+        "Nothing tagged yet. Right-click a node, a turn or a term – or use the tag chips on a selection – to build the timeline."));
+      return;
+    }
+    const tbody = el("tbody");
+    for (const r of rows) {
+      const c = S.convs.get(r.conv);
+      tbody.append(el("tr", { "data-tl": r.target, title: "Click to open · right-click to tag" },
+        el("td", { class: "when" }, r.when ? fmtTime(r.when) : "–"),
+        el("td", { class: "kind", title: r.kind }, r.severity ? el("span", { class: `sev-chip sev-${r.severity}` }, r.severity) : icon(TL_ICON[r.kind] || "sell")),
+        el("td", {}, el("div", { class: "what" }, r.label),
+          el("div", { class: "tag-row", html: tagChipsHTML(r.tags) }),
+          r.comment ? el("div", { class: "cmt" }, r.comment) : null,
+          c ? el("div", { class: "where" }, el("span", { class: "dot", style: { background: c.color } }), `${c.host} / ${c.user} · ${c.title}`) : null)));
+    }
+    body.replaceChildren(toolbar, el("table", { class: "tl-table" },
+      el("thead", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, ""), el("th", {}, "What · where"))), tbody));
+  }
+
+  function exportTimeline(rows) {
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [["when", "kind", "severity", "label", "tags", "comment", "host", "user", "conversation", "target"].join(",")];
+    for (const r of rows) {
+      const c = S.convs.get(r.conv) || {};
+      lines.push([r.when, r.kind, r.severity || "", r.label, r.tags.join(" "), r.comment, c.host, c.user, c.title, r.target].map(q).join(","));
+    }
+    const a = el("a", { href: URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })), download: "synthsift-timeline.csv" });
+    document.body.append(a); a.click(); a.remove();
+  }
+
+  /* ========================================================= navigation */
+  function jumpToEvent(evId) {
+    const ev = S.events.get(evId);
+    if (!ev) return;
+    if (!convVisible(ev.c)) { S.hiddenConvs.delete(ev.c); afterConvToggle(); }
+    S.currentConv = ev.c;
+    if (S.nodes.has(evId) && S.visibleNodes.has(evId)) {
+      selectNode(evId, { quiet: true });
+      network && network.focus(evId, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } });
+    }
+    setTab("transcript", { scrollTo: ev.p[0] });
+    broadcast({ type: "select", id: evId });
+  }
+  function jumpToTarget(target) {
+    if (target.startsWith("event:")) return jumpToEvent(target.slice(6));
+    if (target.startsWith("conv:")) {
+      const cid = target.slice(5);
+      if (!S.convs.has(cid)) return;
+      S.currentConv = cid;
+      setTab("transcript");
+      fitConversation(cid);
+      return;
+    }
+    const id = target.slice(5);
+    if (S.nodes.has(id)) selectNode(id, { focus: true });
+    else snack("That term is not in the current graph (filtered or below the minimum mentions).");
+  }
+
   function onPanelClick(ev) {
     const t = ev.target;
+    const tm = t.closest("[data-tagmenu]");
+    if (tm) { const r = tm.getBoundingClientRect(); openTagMenu(tm.dataset.tagmenu, r.left, r.bottom + 4); return; }
+    const fr = t.closest("[data-finding]");
+    if (fr) { const f = S.data.findings[Number(fr.dataset.finding)]; if (f) jumpToEvent(f.event); return; }
+    const tl = t.closest("[data-tl]");
+    if (tl) { jumpToTarget(tl.dataset.tl); return; }
     const ent = t.closest(".ent");
     if (ent) {
       selectNode(ent.dataset.node, { focus: true, quiet: false });
@@ -1042,8 +1468,11 @@
     const jump = t.closest("[data-jump]");
     if (jump) {
       const id = jump.dataset.jump;
-      if (S.visibleNodes.has(id)) { selectNode(id, { quiet: true }); network.focus(id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } }); }
-      else snack("That node is hidden by the current filters.");
+      if (S.visibleNodes.has(id)) {
+        selectNode(id, { quiet: true });
+        network && network.focus(id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } });
+        broadcast({ type: "select", id });
+      } else snack("That node is hidden by the current filters.");
       return;
     }
     const win = t.closest("[data-window]");
@@ -1064,6 +1493,183 @@
     if (!network) return;
     const ids = [...S.visibleNodes].filter((id) => { const n = S.nodes.get(id); return n.type !== "entity" && n.conv && n.conv.includes(cid); });
     if (ids.length) network.fit({ nodes: ids, animation: { duration: 500 } });
+  }
+
+  /* ======================================================= annotations */
+  // Analyst tags / comments. Targets: "conv:<cid>", "event:<event id>", "term:<entity node id>".
+  function targetOf(nodeId) {
+    const n = S.nodes.get(nodeId);
+    if (!n) return null;
+    if (n.type === "conversation") return nodeId;
+    if (n.type === "entity") return "term:" + nodeId;
+    if (n.type === "tool_arg") return "event:" + n.event;
+    if (n.type === "tool_hub") return null;
+    return "event:" + nodeId;
+  }
+  function nodeOfTarget(target) {
+    if (!target) return null;
+    if (target.startsWith("conv:")) return target;
+    if (target.startsWith("event:")) return target.slice(6);
+    if (target.startsWith("term:")) return target.slice(5);
+    return null;
+  }
+  const annOf = (target) => (target && S.annotations[target]) || null;
+  const tagsFor = (target) => (annOf(target) || {}).tags || [];
+  const tagInfo = (name) => S.tags.find((t) => t.name === name) || { name, color: "#5F6368", icon: "sell" };
+
+  // tags that apply to a graph node: its own, plus its conversation's for structural nodes
+  function nodeTags(nodeId) {
+    const own = tagsFor(targetOf(nodeId));
+    const n = S.nodes.get(nodeId);
+    if (n && n.type !== "entity" && n.type !== "conversation" && n.conv && n.conv[0]) {
+      const ct = tagsFor("conv:" + n.conv[0]);
+      if (ct.length) return [...new Set([...own, ...ct])];
+    }
+    return own;
+  }
+
+  function labelFor(target) {
+    const id = nodeOfTarget(target);
+    if (target.startsWith("conv:")) { const c = S.convs.get(target.slice(5)); return c ? c.title : target; }
+    if (target.startsWith("event:")) {
+      const ev = S.events.get(id);
+      if (!ev) return id;
+      const first = ev.p.length ? S.paras.get(ev.p[0]).t.replace(/\s+/g, " ").slice(0, 90) : "";
+      return `${ev.label}${first ? " – " + first : ""}`;
+    }
+    const n = S.nodes.get(id);
+    return n ? n.label : id.replace(/^ent:/, "");
+  }
+  function convFor(target) {
+    if (target.startsWith("conv:")) return target.slice(5);
+    if (target.startsWith("event:")) { const ev = S.events.get(target.slice(6)); return ev ? ev.c : null; }
+    const n = S.nodes.get(target.slice(5));
+    return n && n.conv && n.conv.length ? n.conv[0] : null;
+  }
+  function tsFor(target) {
+    if (target.startsWith("conv:")) { const c = S.convs.get(target.slice(5)); return c ? c.started_at || null : null; }
+    if (target.startsWith("event:")) { const ev = S.events.get(target.slice(6)); return ev ? ev.ts || null : null; }
+    const n = S.nodes.get(target.slice(5));
+    let best = null;
+    for (const [pid] of (n && n.occ) || []) {
+      const ts = S.events.get(S.paras.get(pid)?.e)?.ts;
+      if (ts && (!best || ts < best)) best = ts;
+    }
+    return best;
+  }
+
+  async function loadAnnotations() {
+    try {
+      const r = await api("/api/annotations");
+      S.annotations = r.annotations || {};
+      S.tags = r.tags || [];
+    } catch (e) { /* keep previous */ }
+  }
+
+  async function saveAnnotation(target, tags, comment) {
+    const prev = annOf(target);
+    const body = { target, tags, comment: comment ?? (prev ? prev.comment : ""), label: labelFor(target),
+      conv: convFor(target), ts: tsFor(target) };
+    try {
+      const r = await api("/api/annotations", { method: "PUT", body });
+      if (r.annotation) S.annotations[target] = r.annotation; else delete S.annotations[target];
+      S.tags = r.tags || S.tags;
+      afterAnnotationChange();
+      broadcast({ type: "annotations" });
+    } catch (e) {
+      snack("Could not save: " + e.message);
+    }
+  }
+  function toggleTag(target, tag) {
+    const cur = new Set(tagsFor(target));
+    cur.has(tag) ? cur.delete(tag) : cur.add(tag);
+    return saveAnnotation(target, [...cur]);
+  }
+
+  function afterAnnotationChange() {
+    applyFilters();
+    renderTagChips();
+    renderSelection();
+    network && network.redraw();
+    renderPanel({ keepScroll: true });
+  }
+
+  function tagChipsHTML(tags) {
+    return tags.map((t) => { const i = tagInfo(t); return `<span class="tag-chip" style="--tag:${esc(i.color)}">${esc(t)}</span>`; }).join("");
+  }
+
+  function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
+
+  function placeMenu(menu, x, y) {
+    document.body.append(menu);
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
+    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
+    setTimeout(() => {
+      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close, true); } };
+      document.addEventListener("mousedown", close, true);
+    }, 0);
+  }
+
+  const KIND_LABEL = { conv: "Session", event: "Turn", term: "Term" };
+  function openTagMenu(target, x, y) {
+    if (!target) return;
+    closeMenus();
+    const kind = target.split(":", 1)[0];
+    const menu = el("div", { class: "menu tag-menu", role: "menu" });
+    const render = () => {
+      const cur = new Set(tagsFor(target));
+      const a = annOf(target);
+      const head = el("div", { class: "tm-head" }, `Tag ${KIND_LABEL[kind] || kind}`, el("b", { title: labelFor(target) }, labelFor(target)));
+      const items = S.tags.map((t) => el("button", {
+        role: "menuitemcheckbox", "aria-checked": cur.has(t.name) ? "true" : "false",
+        onclick: async () => { await toggleTag(target, t.name); render(); },
+      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
+        el("span", { class: "grow" }, t.name)));
+      const newTag = el("button", { onclick: async () => {
+        const name = (prompt("New tag name") || "").trim();
+        if (name) { await toggleTag(target, name.toLowerCase()); render(); }
+      } }, icon("add"), el("span", { class: "grow" }, "New tag…"));
+      const ta = el("textarea", { class: "text-input", placeholder: "Analyst comment…" });
+      ta.value = a ? a.comment : "";
+      const comment = el("div", { class: "tm-comment" }, ta, el("div", { class: "tm-actions" },
+        el("button", { class: "btn text sm", onclick: async () => { await saveAnnotation(target, [], ""); menu.remove(); } }, "Clear all"),
+        el("button", { class: "btn filled sm", onclick: async () => { await saveAnnotation(target, [...tagsFor(target)], ta.value); menu.remove(); snack("Comment saved"); } }, "Save comment")));
+      menu.replaceChildren(head, ...items, newTag, comment);
+    };
+    render();
+    placeMenu(menu, x, y);
+  }
+
+  function renderTagChips() {
+    const box = $("tag-chips");
+    if (!box) return;
+    const counts = new Map();
+    for (const a of Object.values(S.annotations)) for (const t of a.tags) counts.set(t, (counts.get(t) || 0) + 1);
+    $("tag-count").textContent = fmt(Object.keys(S.annotations).length);
+    const chips = S.tags.map((t) => el("button", {
+      class: `chip sm tagf${S.tagFilter.has(t.name) ? " selected" : ""}${counts.get(t.name) ? "" : " muted-chip"}`,
+      style: { "--tag": t.color }, title: `Show only items tagged “${t.name}” (graph fades the rest, timeline filters)`,
+      onclick: () => { S.tagFilter.has(t.name) ? S.tagFilter.delete(t.name) : S.tagFilter.add(t.name); store.set("tagFilter", [...S.tagFilter]); afterTagFilter(); },
+      oncontextmenu: (e) => {
+        e.preventDefault();
+        if (["bad", "suspicious", "seen", "ignore"].includes(t.name)) return;
+        if (confirm(`Delete custom tag “${t.name}” and remove it everywhere?`)) {
+          api(`/api/tags?name=${encodeURIComponent(t.name)}`, { method: "DELETE" }).then(async () => { await loadAnnotations(); afterAnnotationChange(); broadcast({ type: "annotations" }); });
+        }
+      },
+    }, el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(counts.get(t.name) || 0))));
+    chips.push(el("button", {
+      class: `chip sm${S.hideIgnored ? " selected" : ""}`, title: "Hide everything tagged “ignore” from the graph",
+      onclick: () => { S.hideIgnored = !S.hideIgnored; store.set("hideIgnored", S.hideIgnored); applyFilters(); renderTagChips(); },
+    }, icon(S.hideIgnored ? "visibility_off" : "visibility", "xs"), "Hide ignored"));
+    box.replaceChildren(...chips);
+  }
+  function afterTagFilter() {
+    renderTagChips();
+    network && network.redraw();
+    if (S.tab === "timeline") renderTimeline();
+    broadcast({ type: "tagFilter", tags: [...S.tagFilter] });
   }
 
   /* ============================================================ search */
@@ -1150,7 +1756,8 @@
     $("conv-count").textContent = fmt(S.convOrder.length);
     const frag = document.createDocumentFragment();
     const renderNode = (node, container) => {
-      const convs = descendantConvs(node);
+      const convs = descendantConvs(node).filter(convMatchesFilter);
+      if (!convs.length) return;
       if (counts && !convs.some((c) => counts.get(c))) return;
       const collapsed = S.collapsed.has(node.key) && !counts;
       const cb = cbIcon(convs);
@@ -1166,6 +1773,7 @@
       const kids = el("div", { class: "tree-children" });
       for (const ch of node.children.values()) renderNode(ch, kids);
       for (const cid of node.convs) {
+        if (!convMatchesFilter(cid)) continue;
         const c = S.convs.get(cid);
         const hits = counts ? counts.get(cid) || 0 : 0;
         if (counts && !hits) continue;
@@ -1208,7 +1816,7 @@
     if (tg) {
       const node = findNodeByKey(tg.dataset.toggle);
       if (!node) return;
-      const convs = descendantConvs(node);
+      const convs = descendantConvs(node).filter(convMatchesFilter);
       const allOn = convs.every(convVisible);
       for (const c of convs) allOn ? S.hiddenConvs.add(c) : S.hiddenConvs.delete(c);
       afterConvToggle();
@@ -1247,6 +1855,7 @@
   }
 
   function afterConvToggle() {
+    broadcast({ type: "filters", hiddenConvs: [...S.hiddenConvs], filter: S.filter });
     applyFilters();
     if (!convVisible(S.currentConv)) S.currentConv = S.convOrder.find(convVisible) || S.currentConv;
     if (network && S.visibleNodes.size) network.fit({ nodes: [...S.visibleNodes], animation: { duration: 400 } });
@@ -1255,6 +1864,25 @@
     renderLayers();
     if (S.search) runSearch(S.search.q, false);
     else renderPanel();
+  }
+
+  function renderFilters() {
+    if (!S.data) return;
+    const all = S.convOrder.map((c) => S.convs.get(c));
+    const f = S.filter;
+    const scopes = {
+      host: all,
+      user: all.filter((c) => !f.host || c.host === f.host),
+      harness: all.filter((c) => (!f.host || c.host === f.host) && (!f.user || c.user === f.user)),
+    };
+    for (const [key, id, label] of [["host", "f-host", "All hosts"], ["user", "f-user", "All users"], ["harness", "f-harness", "All agents"]]) {
+      const vals = [...new Set(scopes[key].map((c) => c[key]))].sort();
+      if (f[key] && !vals.includes(f[key])) f[key] = "";
+      const sel = $(id);
+      sel.replaceChildren(el("option", { value: "" }, `${label} (${vals.length})`),
+        ...vals.map((v) => el("option", { value: v, selected: f[key] === v }, v)));
+      sel.closest(".mini-select").classList.toggle("active", !!f[key]);
+    }
   }
 
   function runConvSearch(q) {
@@ -1382,7 +2010,7 @@
     stage.addEventListener("pointerleave", hideTip);
 
     const q = $("q");
-    q.addEventListener("input", debounce(() => runSearch(q.value), 220));
+    q.addEventListener("input", debounce(() => { runSearch(q.value); broadcast({ type: "search", q: q.value }); }, 220));
     q.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         runSearch(q.value);
@@ -1477,14 +2105,25 @@
     const split = $("splitter");
     split.addEventListener("pointerdown", (e) => {
       split.setPointerCapture(e.pointerId);
+      const root = document.documentElement;
       const move = (ev) => {
-        const w = Math.max(280, Math.min(window.innerWidth - 480, window.innerWidth - ev.clientX - 12));
-        document.documentElement.style.setProperty("--right-w", w + "px");
+        if (S.dock === "bottom") {
+          const h = Math.max(160, Math.min(window.innerHeight - 240, window.innerHeight - ev.clientY - 12));
+          root.style.setProperty("--bottom-h", h + "px");
+        } else if (S.dock === "left") {
+          const left = $("left").getBoundingClientRect().right;
+          const w = Math.max(280, Math.min(window.innerWidth - 480, ev.clientX - left - 8));
+          root.style.setProperty("--right-w", w + "px");
+        } else {
+          const w = Math.max(280, Math.min(window.innerWidth - 480, window.innerWidth - ev.clientX - 12));
+          root.style.setProperty("--right-w", w + "px");
+        }
       };
       const up = () => {
         split.removeEventListener("pointermove", move);
         split.removeEventListener("pointerup", up);
-        store.set("rightWidth", parseInt(getComputedStyle(document.documentElement).getPropertyValue("--right-w"), 10));
+        store.set("rightWidth", parseInt(getComputedStyle(root).getPropertyValue("--right-w"), 10));
+        store.set("bottomHeight", parseInt(getComputedStyle(root).getPropertyValue("--bottom-h"), 10));
       };
       split.addEventListener("pointermove", move);
       split.addEventListener("pointerup", up);
@@ -1493,9 +2132,52 @@
     document.addEventListener("keydown", (e) => {
       if (e.target.matches("input, textarea, select")) return;
       if (e.key === "/") { e.preventDefault(); $("q").focus(); }
-      else if (e.key === "Escape") clearSelection();
+      else if (e.key === "Escape") { if (document.querySelector(".menu")) closeMenus(); else clearSelection(); }
       else if (e.key === "f" && network) network.fit({ animation: { duration: 400 } });
     });
+    // host / user / agent filters
+    for (const [key, id] of [["host", "f-host"], ["user", "f-user"], ["harness", "f-harness"]]) {
+      $(id).addEventListener("change", (e) => {
+        S.filter = { ...S.filter, [key]: e.target.value };
+        if (key === "host") { S.filter.user = ""; S.filter.harness = ""; }
+        if (key === "user") S.filter.harness = "";
+        store.set("convFilter", S.filter);
+        renderFilters();
+        afterConvToggle();
+      });
+    }
+    // right-click tagging: graph, transcript / matches / findings / timeline, conversation tree
+    $("graph").addEventListener("contextmenu", (e) => e.preventDefault());
+    $("panel-body").addEventListener("contextmenu", (e) => {
+      const t = e.target;
+      let target = null;
+      const ent = t.closest(".ent");
+      const tl = t.closest("[data-tl]");
+      const fr = t.closest("[data-finding]");
+      const msg = t.closest("[data-event]");
+      const para = t.closest("[data-pid]");
+      if (ent) target = "term:" + ent.dataset.node;
+      else if (tl) target = tl.dataset.tl;
+      else if (fr) target = "event:" + S.data.findings[Number(fr.dataset.finding)].event;
+      else if (msg) target = "event:" + msg.dataset.event;
+      else if (para && S.paras.get(para.dataset.pid)) target = "event:" + S.paras.get(para.dataset.pid).e;
+      if (target) { e.preventDefault(); openTagMenu(target, e.clientX, e.clientY); }
+    });
+    $("tree").addEventListener("contextmenu", (e) => {
+      const row = e.target.closest("[data-conv]");
+      if (row) { e.preventDefault(); openTagMenu("conv:" + row.dataset.conv, e.clientX, e.clientY); }
+    });
+    $("tag-new").addEventListener("click", async () => {
+      const name = (prompt("New tag name") || "").trim();
+      if (!name) return;
+      const color = ["#1A73E8", "#9334E6", "#12B5CB", "#E52592", "#188038", "#B06000"][S.tags.length % 6];
+      try { const r = await api("/api/tags", { method: "POST", body: { name, color } }); S.tags = r.tags; renderTagChips(); renderSelection(); broadcast({ type: "annotations" }); }
+      catch (err) { snack(err.message); }
+    });
+    $("tag-clear").addEventListener("click", () => { S.tagFilter.clear(); store.set("tagFilter", []); afterTagFilter(); });
+    $("t-flagged").addEventListener("click", () => setFlaggedOnly(!S.flaggedOnly));
+    $("btn-dock").addEventListener("click", (e) => { e.stopPropagation(); dockMenu(e.currentTarget); });
+    $("popped-note").addEventListener("click", dockBack);
     window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (store.get("theme", "auto") === "auto") { S.theme = SS.effectiveTheme("auto"); GC = graphColors(); restyleEdges(); network && network.redraw(); }
     });
