@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SynthSift Settings</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script>
+    try { const t = localStorage.getItem("synthsift.theme"); if (t && t !== "auto") document.documentElement.dataset.theme = JSON.parse(t); } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="icon-btn" href="/" title="Back to graph"><span class="msi">arrow_back</span></a>
+    <div class="brand"><img class="logo" src="/static/favicon.svg" alt=""><span><b>Synth</b>Sift</span></div>
+    <div style="font-size:22px;color:var(--on-surface-variant)">Settings</div>
+    <div class="grow"></div>
+    <label class="search compact" style="flex:0 1 320px">
+      <span class="msi sm">search</span><input id="filter" type="search" placeholder="Find a setting" autocomplete="off">
+    </label>
+    <button class="btn text" id="reset"><span class="msi">restart_alt</span>Reset all</button>
+    <div class="progress hidden" id="progress"><div class="bar"></div></div>
+  </header>
+  <div class="settings-shell">
+    <nav class="nav-rail" id="nav"></nav>
+    <main class="settings-main" id="main"></main>
+  </div>
+  <div class="savebar hidden" id="savebar">
+    <span id="dirty-text"></span>
+    <button class="btn text" id="discard">Discard</button>
+    <button class="btn filled" id="save"><span class="msi">check</span>Save</button>
+  </div>
+  <div class="snackbar" id="snackbar"><span class="grow" id="snack-text"></span><button class="btn text sm hidden" id="snack-action"></button></div>
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/settings.js"></script>
+</body>
+</html>

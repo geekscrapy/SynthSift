@@ -1,0 +1,43 @@
+{
+  "format": "synthsift.example/v1",
+  "session_id": "hist-02",
+  "title": "Ada Lovelace and the Analytical Engine",
+  "model": "general-assistant",
+  "started_at": "2026-01-20T19:00:00Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who was Ada Lovelace and why is she called the first programmer?",
+      "timestamp": "2026-01-20T19:01:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Ada Lovelace (1815–1852) was an English mathematician, daughter of the poet Lord Byron. She worked with Charles Babbage on his proposed Analytical Engine.\n\nIn 1843 she translated an article by the Italian engineer Luigi Menabrea and added her own Notes, three times longer than the original. Note G describes an algorithm for computing Bernoulli numbers on the Engine, which is widely considered the first published computer program.\n\nShe also foresaw that such machines could manipulate symbols and even compose music, not just calculate numbers."
+        }
+      ],
+      "timestamp": "2026-01-20T19:01:20Z"
+    },
+    {
+      "role": "user",
+      "content": "Did Babbage ever build the Analytical Engine?",
+      "timestamp": "2026-01-20T19:02:20Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "text": "No. He built part of the Difference Engine; the Science Museum in London completed Difference Engine No. 2 in 1991. The Analytical Engine only has a trial piece."
+        },
+        {
+          "type": "text",
+          "text": "No. Babbage only built a small trial piece of the mill before his death in 1871, largely because of funding disputes with the British government. The Science Museum in London later built his Difference Engine No. 2 from the original plans in 1991, proving the design worked."
+        }
+      ],
+      "timestamp": "2026-01-20T19:02:40Z"
+    }
+  ]
+}

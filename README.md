@@ -1,0 +1,210 @@
+# SynthSift
+
+**Turn LLM agent transcripts into an interactive knowledge + flow graph without using an LLM.**
+
+SynthSift reads transcripts saved by agent harnesses, normalises them into one
+model and runs classic NLP over every paragraph: spaCy NER and dependency
+parsing, regular expressions, curated vocabularies and WordNet. It pulls out
+people, places, files, IPs, hashes, ingredients, vehicles and so on, then draws
+everything with networkx + vis-network (the engine behind pyvis). The graph
+contains the conversation flow (user → LLM → tool call → result → …), every
+tool call and its arguments, the agent's thoughts on a separate layer, and the
+entities that tie conversations together. Clicking anything takes you to the
+exact words in the transcript.
+
+![Overview](docs/overview.jpg)
+
+## Quick start
+
+```bash
+uv run synthsift --open                     # web UI on http://127.0.0.1:8765
+uv run synthsift serve --load samples/synthsift-samples.zip --open
+uv run synthsift build my-transcripts.zip -o graph.html   # standalone pyvis HTML, no server
+uv run synthsift harnesses                  # list transcript parsers
+```
+
+`uv run` creates the environment on first use, including the small English
+spaCy model. Uploads and settings are kept in `./.synthsift/` (`--data-dir` to
+change).
+
+### Upload layout
+
+Upload one or more `.zip` files (button, or drag & drop anywhere):
+
+```
+upload.zip
+└── <host>/
+    └── <user>/
+        └── <harness>/                 example | claude_code | gemini | antigravity | hermes | openclaw
+            ├── transcript1-xyz.json
+            └── transcript2-abc.jsonl
+```
+
+Extra wrapper folders above `host/` are ignored, and sub-folders below the
+harness folder become part of the session name. When the harness folder isn't
+recognised, each implemented parser gets to *sniff* the file instead. One file
+is one session and may hold several conversations.
+
+## Using the UI
+
+| Where | What it does |
+|---|---|
+| **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click zooms. |
+| **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
+| **Conversations panel** | Tree of host › user › harness › conversation. Checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
+| **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. |
+| **Layers chips** | Show or hide the *Thoughts*, *Dialogue*, *Actions* and *Entities* layers. |
+| **Force / Layers** | *Force*: free physics. *Layers*: a swim-lane timeline with thoughts above the dialogue, tool calls and arguments below it, and entities at the bottom. Thoughts sit on their own band because they weren't acted on. |
+| **Node types** | Legend and filter: click to toggle a type, shift-click to show only that type. |
+| **Export** | Standalone **pyvis HTML** (works offline), **GraphML** (Gephi / yEd / Cytoscape) or a PNG of the current view. |
+| **Settings** (⚙) | About 70 knobs for extraction, text sources, custom vocabularies/patterns, graph content, edges, physics, appearance, the transcript panel and every colour. Each setting shows whether changing it re-analyses the transcripts, rebuilds the graph, or applies instantly. |
+
+![Selecting a node](docs/selection.jpg)
+![Layers layout](docs/layers.jpg)
+
+## How it works (no LLM anywhere)
+
+```
+zip ─► ingest ─► harness parser ─► normalized Conversation ─► segment ─► NLP ─► networkx graph ─► UI / pyvis
+        (path → host/user/harness)    (models.py)              (events +    (per paragraph,
+                                                                paragraphs)  cached)
+```
+
+1. **Harness parsers** (`src/synthsift/harnesses/`) turn each native format into
+   `Conversation → Message(role) → Block(text | thinking | tool_call | tool_result)`.
+2. **Segmentation** (`segment.py`) flattens a conversation into *events*: user
+   turns, LLM replies, thoughts, individual tool calls and tool results. Each
+   event is split into *paragraphs*, which are what the transcript panel shows
+   and search highlights. Each tool argument gets its own paragraph, and fenced
+   code is kept whole.
+3. **Extraction** (`nlp/pipeline.py`). Earlier sources win when spans overlap:
+   1. *Regex patterns*: URLs, e-mails, IPv4/6 (+port/CIDR), MACs, file paths
+      (Unix, Windows, relative, bare filenames), domains, hashes, UUIDs, CVEs,
+      AWS ARNs and regions, versions, dates, error types, env vars and
+      constants, inline code, identifiers, @mentions, #tags, hex colours,
+      coordinates, plus your own patterns.
+   2. *Vocabularies*: your custom terms, then built-in lists (software and
+      infrastructure, AI models, vehicle makes and models, cooking terms, …).
+      Ambiguous words only match when capitalised ("Rust" the language, not
+      rust on a wheel arch).
+   3. *spaCy NER*: people, organisations, places, products, events, dates, money, …
+   4. *Noun phrases* get a category from a WordNet hypernym lexicon shipped in
+      the package (`garlic → food`, `sedan → vehicle`, `surgeon → role`,
+      `torque wrench → tool`). Anything left over becomes a *concept*.
+      Technical nouns ("client", "session", "fixture") are re-classed as
+      software inside technical conversations.
+   5. *Relations*: a dependency parse yields subject –verb→ object triples
+      between entities. When the speaker acts ("read /etc/hosts"), the verb
+      labels the message → entity edge.
+
+   Tool results and code blocks get pattern-level analysis by default (fast,
+   low noise). Settings can switch on full NLP for them.
+4. **Graph** (`graph/builder.py`):
+
+   | Node | Meaning | Layer |
+   |---|---|---|
+   | conversation, user, assistant (LLM), system | the dialogue | dialogue |
+   | thought | a reasoning block | thought |
+   | tool_call (one per call), tool_arg (one per argument), tool_result | actions | action |
+   | entity (category = file_path, ip, person, food, vehicle, …) | extracted objects | entity, or *thought* when only ever mentioned while thinking |
+
+   Edges: `flow` (conversation order), `thinks` / `leads_to` (thought → next
+   action), `arg`, `returns`, `mention` (event → entity, labelled with the
+   verb), `relation` (entity → entity, verb label), `alias` (path variants of
+   one file), and optional `cooccurs` and tool hubs.
+   Entities are shared across conversations by default, which is what links
+   separate sessions together.
+
+## Adding a harness
+
+Create `src/synthsift/harnesses/<name>.py`. Every module in that package is
+imported automatically:
+
+```python
+from ..models import Block, Conversation, Message
+from .base import HarnessParser, register
+
+
+@register
+class MyAgentParser(HarnessParser):
+    name = "myagent"                 # zip folder name
+    aliases = ("my-agent",)
+    label = "My Agent"
+
+    def parse(self, raw: bytes, filename: str) -> list[Conversation]:
+        rows = self.load_jsonl(raw)
+        msgs = []
+        for r in rows:
+            if r["kind"] == "prompt":
+                msgs.append(Message("user", [Block.text_block(r["text"])]))
+            elif r["kind"] == "step":
+                msgs.append(Message("assistant", [
+                    Block.thinking(r.get("plan", "")),
+                    Block.tool_call(r["tool"], r["args"], r["id"]),
+                ]))
+            elif r["kind"] == "observation":
+                msgs.append(Message("tool", [Block.tool_result(r["output"], r["id"])]))
+        return [Conversation(messages=msgs)]
+
+    def sniff(self, raw: bytes, filename: str) -> float:   # optional
+        return 0.9 if b'"kind": "prompt"' in raw[:2000] else 0.0
+```
+
+`example.py` is the complete reference implementation. It also reads OpenAI
+chat-completions logs and Anthropic Messages logs, so it's a good base to copy.
+`claude_code.py`, `gemini.py`, `antigravity.py`, `hermes.py` and `openclaw.py`
+are registered placeholders: files in those folders are skipped with a
+warning until the parser is written. Each one's docstring has notes on the
+native format.
+
+### The example format
+
+```json
+{
+  "format": "synthsift.example/v1",
+  "title": "Optional title",
+  "messages": [
+    {"role": "user", "content": "Read /etc/hosts please"},
+    {"role": "assistant", "content": [
+      {"type": "thinking", "text": "I should use read_file."},
+      {"type": "tool_call", "id": "c1", "name": "read_file", "arguments": {"path": "/etc/hosts"}}
+    ]},
+    {"role": "tool", "tool_call_id": "c1", "content": "127.0.0.1 localhost"},
+    {"role": "assistant", "content": "It maps localhost to 127.0.0.1."}
+  ]
+}
+```
+
+Also accepted: `{"conversations": [...]}`, a bare list of messages, and JSONL.
+See `samples/transcripts/` for complete examples.
+
+## Better entity recognition
+
+The bundled `en_core_web_sm` model is fast but makes mistakes. Install a larger
+model and select it under Settings → Extraction → spaCy model:
+
+```bash
+uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl
+# or en_core_web_lg / en_core_web_trf
+```
+
+## Development
+
+```bash
+uv run pytest                                  # tests
+uv run python scripts/generate_samples.py      # rebuild samples/ (short + very long fake transcripts)
+uv run python scripts/build_lexicon.py         # rebuild the WordNet category lexicon
+uv run python scripts/update_icon_font.py      # re-subset Material Symbols after adding icons to the UI
+```
+
+The front end is plain HTML/CSS/JS in `src/synthsift/static/`, with no build
+step. Fonts (Roboto, Roboto Mono, Material Symbols) and vis-network are served
+locally, so the app works offline.
+
+## Credits & licences
+
+* WordNet 3.0 © Princeton University. The category lexicon in
+  `src/synthsift/nlp/data/` is derived from it (see `WORDNET_LICENSE.txt`).
+* Roboto and Roboto Mono (SIL OFL 1.1), Material Symbols (Apache 2.0), vendored
+  from Google Fonts.
+* vis-network is served from the pyvis package.

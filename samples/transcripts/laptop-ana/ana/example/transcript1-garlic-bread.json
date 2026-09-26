@@ -1,0 +1,104 @@
+{
+  "format": "synthsift.example/v1",
+  "session_id": "gb-7f3a",
+  "title": "Garlic bread for Saturday",
+  "model": "chef-model-2",
+  "started_at": "2026-03-14T17:02:00Z",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a friendly cooking assistant with web search and unit conversion tools."
+    },
+    {
+      "role": "user",
+      "content": "Hi! I'm hosting Maria and Tom on Saturday and want to make proper garlic bread. I have a sourdough loaf, butter, a whole head of garlic, parsley and some parmesan. Do I need anything else?",
+      "timestamp": "2026-03-14T17:03:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "text": "The user has most ingredients. Classic garlic butter needs salt and maybe olive oil. Let me check a reliable recipe for oven temperature and timing before answering."
+        },
+        {
+          "type": "text",
+          "text": "Great base already! Let me quickly check a well-tested recipe for timings."
+        },
+        {
+          "type": "tool_call",
+          "id": "call_001",
+          "name": "web_search",
+          "arguments": {
+            "query": "best garlic bread recipe sourdough butter parmesan",
+            "max_results": 3
+          }
+        }
+      ],
+      "timestamp": "2026-03-14T17:03:20Z"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_001",
+      "name": "web_search",
+      "content": "1. Serious Eats – The Best Garlic Bread: roast garlic, mix with softened butter, olive oil, parmesan and parsley; bake at 425°F for 10 minutes then broil 1–2 minutes.\n\n2. BBC Good Food – Sourdough garlic bread: 100g butter, 3 garlic cloves, pinch of sea salt, bake 200°C for 12 minutes wrapped in foil.\n\n3. NYT Cooking – Garlic bread with mozzarella.",
+      "timestamp": "2026-03-14T17:03:23Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "text": "The user is probably in Europe given 'parmesan' spelling doesn't tell much, but BBC uses Celsius. Convert 425°F so both are shown."
+        },
+        {
+          "type": "tool_call",
+          "id": "call_002",
+          "name": "unit_convert",
+          "arguments": {
+            "value": 425,
+            "from_unit": "fahrenheit",
+            "to_unit": "celsius"
+          }
+        }
+      ],
+      "timestamp": "2026-03-14T17:03:43Z"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_002",
+      "name": "unit_convert",
+      "content": "425 fahrenheit = 218.3 celsius",
+      "timestamp": "2026-03-14T17:03:46Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "You only need two extras: **flaky sea salt** and a splash of **olive oil**.\n\n1. Soften 100 g butter and mash in 4 grated garlic cloves, 2 tbsp chopped parsley, 30 g grated parmesan, a pinch of salt and 1 tbsp olive oil.\n2. Slice the sourdough loaf almost all the way through and spread the garlic butter between slices.\n3. Wrap in foil and bake at 220 °C (425 °F) for 10 minutes, then open the foil and broil for 2 minutes.\n\nMaria and Tom will love it."
+        }
+      ],
+      "timestamp": "2026-03-14T17:04:06Z"
+    },
+    {
+      "role": "user",
+      "content": "Tom is lactose intolerant. What can replace the butter?",
+      "timestamp": "2026-03-14T17:05:06Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "text": "Lactose intolerance – ghee is nearly lactose free, or use olive oil entirely, or a vegan butter. Parmesan is naturally very low in lactose, so it can usually stay."
+        },
+        {
+          "type": "text",
+          "text": "Swap the butter for **extra virgin olive oil** (use about 80 ml) or **ghee**, which is almost lactose-free. Aged parmesan contains very little lactose, so most people tolerate it. If you want to be extra safe, use nutritional yeast instead of the cheese."
+        }
+      ],
+      "timestamp": "2026-03-14T17:05:26Z"
+    }
+  ]
+}

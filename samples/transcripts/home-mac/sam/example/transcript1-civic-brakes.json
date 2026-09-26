@@ -1,0 +1,65 @@
+{
+  "format": "synthsift.example/v1",
+  "session_id": "car-118",
+  "title": "Squeaky brakes on the Civic",
+  "model": "general-assistant",
+  "started_at": "2026-02-08T11:30:00Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "My 2016 Honda Civic makes a high pitched squeal when braking, worse in the morning. Dave at the garage in Leeds quoted £320 for front pads and discs. Can I do it myself? I have a jack, axle stands and a basic socket set.",
+      "timestamp": "2026-02-08T11:31:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "text": "Morning squeal can be surface rust on the discs, which goes away after a few stops. Constant squeal means wear indicators. Front pads and discs on a Civic are a doable DIY job but needs a torque wrench and brake cleaner. Mention safety."
+        },
+        {
+          "type": "text",
+          "text": "A squeal that fades after a few stops is often just surface rust on the discs overnight. If it squeals on every stop, the pads' wear indicators are touching the discs.\n\nIt's a very doable DIY job on a Civic. Besides your jack, axle stands and sockets you'll need:\n- a torque wrench (caliper bracket bolts are 108 Nm, wheel nuts 108 Nm)\n- a brake piston rewind tool or a large G-clamp\n- brake cleaner and copper grease\n- new pads and discs (about £90 for a quality set from Brembo or TRW)\n\nTotal parts and tools: roughly £150 versus £320 at the garage."
+        }
+      ],
+      "timestamp": "2026-02-08T11:31:20Z"
+    },
+    {
+      "role": "user",
+      "content": "Which exact parts fit my car? The reg is YX16 ABC.",
+      "timestamp": "2026-02-08T11:32:20Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_call",
+          "id": "call_001",
+          "name": "parts_lookup",
+          "arguments": {
+            "vehicle": "Honda Civic 2016 1.8 i-VTEC",
+            "part": "front brake discs and pads"
+          }
+        }
+      ],
+      "timestamp": "2026-02-08T11:32:40Z"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_001",
+      "name": "parts_lookup",
+      "content": "Brembo 09.A455.11 front discs (282 mm vented) £58.40 pair\nTRW GDB3470 front pads £31.99\nFits: Honda Civic IX (FK) 1.8 2012-2017",
+      "timestamp": "2026-02-08T11:32:43Z"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "For a 2016 Civic 1.8 i-VTEC: Brembo 09.A455.11 discs (282 mm vented, £58.40) and TRW GDB3470 pads (£31.99). Double-check the disc diameter against your current ones before fitting."
+        }
+      ],
+      "timestamp": "2026-02-08T11:33:03Z"
+    }
+  ]
+}

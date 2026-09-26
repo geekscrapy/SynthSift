@@ -1,0 +1,81 @@
+{
+  "format": "synthsift.example/v1",
+  "conversations": [
+    {
+      "format": "synthsift.example/v1",
+      "session_id": "gard-1",
+      "title": "Tomatoes in a small garden",
+      "model": "general-assistant",
+      "started_at": "2026-04-01T08:00:00Z",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I have a 2x3 m raised bed in Bristol. Which tomato varieties and companion plants should I grow?",
+          "timestamp": "2026-04-01T08:01:00Z"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "For Bristol's mild but damp climate choose blight-resistant varieties like 'Crimson Crush' and 'Mountain Magic'. Plant basil and marigolds between them to deter whitefly, and keep potatoes far away because they share blight."
+            }
+          ],
+          "timestamp": "2026-04-01T08:01:20Z"
+        }
+      ]
+    },
+    {
+      "format": "synthsift.example/v1",
+      "session_id": "vet-1",
+      "title": "Dog ate chocolate",
+      "model": "general-assistant",
+      "started_at": "2026-04-03T21:40:00Z",
+      "messages": [
+        {
+          "role": "user",
+          "content": "My beagle Biscuit just ate half a bar of dark chocolate (about 50 g). He weighs 12 kg. Is it dangerous?",
+          "timestamp": "2026-04-03T21:41:00Z"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "text": "Dark chocolate has ~5.5 mg/g theobromine → 275 mg / 12 kg ≈ 23 mg/kg: mild to moderate toxicity range. Recommend calling a vet now."
+            },
+            {
+              "type": "tool_call",
+              "id": "call_001",
+              "name": "toxicity_calculator",
+              "arguments": {
+                "substance": "theobromine",
+                "source": "dark chocolate",
+                "amount_g": 50,
+                "dog_weight_kg": 12
+              }
+            }
+          ],
+          "timestamp": "2026-04-03T21:41:20Z"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_001",
+          "name": "toxicity_calculator",
+          "content": "Theobromine dose ≈ 23 mg/kg — mild–moderate signs expected (vomiting, restlessness, tachycardia) above 20 mg/kg.",
+          "timestamp": "2026-04-03T21:41:23Z"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Yes, that's a concerning dose (~23 mg/kg of theobromine). Call your vet or the Animal PoisonLine now; they may induce vomiting if it was within the last 2 hours."
+            }
+          ],
+          "timestamp": "2026-04-03T21:41:43Z"
+        }
+      ]
+    }
+  ]
+}

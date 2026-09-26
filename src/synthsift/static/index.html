@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SynthSift</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script>
+    // apply the saved theme before first paint
+    try { const t = JSON.parse(localStorage.getItem("synthsift.theme")); if (t && t !== "auto") document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="btn-left" title="Toggle conversations panel"><span class="msi">menu</span></button>
+    <div class="brand"><img class="logo" src="/static/favicon.svg" alt=""><span><b>Synth</b>Sift</span></div>
+    <label class="search" id="global-search">
+      <span class="msi">search</span>
+      <input id="q" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Search words, entities, paths, tool arguments…  (/regex/ supported)">
+      <span class="result" id="q-result"></span>
+      <button class="icon-btn sm hidden" id="q-clear" title="Clear search"><span class="msi">close</span></button>
+    </label>
+    <div class="segmented" id="layout-toggle" role="group" aria-label="Layout">
+      <button data-layout="force" title="Free force-directed layout"><span class="msi">bubble_chart</span><span>Force</span></button>
+      <button data-layout="layers" title="Timeline with separate layers for thoughts, dialogue, actions and entities"><span class="msi">view_timeline</span><span>Layers</span></button>
+    </div>
+    <div class="actions">
+      <button class="icon-btn" id="btn-upload" title="Upload transcripts (.zip)"><span class="msi">upload_file</span></button>
+      <button class="icon-btn hide-sm" id="btn-export" title="Export"><span class="msi">download</span></button>
+      <button class="icon-btn hide-sm" id="btn-theme" title="Theme"><span class="msi">dark_mode</span></button>
+      <a class="icon-btn" href="/settings" title="Settings"><span class="msi">settings</span></a>
+      <button class="icon-btn hide-sm" id="btn-right" title="Toggle transcript panel"><span class="msi">right_panel_close</span></button>
+    </div>
+    <div class="progress hidden" id="progress"><div class="bar"></div></div>
+  </header>
+
+  <main class="layout" id="layout">
+    <aside class="drawer" id="left">
+      <section class="section conv-section">
+        <div class="section-title">
+          <div class="grow">Conversations <span class="badge soft" id="conv-count">0</span></div>
+          <button class="icon-btn sm" id="conv-all" title="Show all conversations"><span class="msi">check_box</span></button>
+          <button class="icon-btn sm" id="conv-none" title="Hide all conversations"><span class="msi">check_box_outline_blank</span></button>
+          <button class="icon-btn sm" id="conv-expand" title="Expand / collapse all"><span class="msi">unfold_less</span></button>
+        </div>
+        <label class="search compact">
+          <span class="msi sm">travel_explore</span>
+          <input id="conv-q" type="search" placeholder="Find conversations containing…" autocomplete="off">
+          <button class="icon-btn sm hidden" id="conv-only" title="Show only matching conversations in the graph"><span class="msi">filter_list</span></button>
+        </label>
+        <div class="tree" id="tree"></div>
+      </section>
+      <section class="section legend-section">
+        <div class="section-title"><div class="grow">Node types</div>
+          <button class="icon-btn sm" id="legend-reset" title="Show all types"><span class="msi">restart_alt</span></button>
+        </div>
+        <div class="legend" id="legend"></div>
+      </section>
+      <div class="drawer-foot">
+        <div class="stats" id="stats"></div>
+        <ul class="warn-list" id="warnings"></ul>
+      </div>
+    </aside>
+
+    <section class="stage" id="stage">
+      <div id="graph"></div>
+      <div class="graph-toolbar">
+        <div class="layer-chips" id="layers" role="group" aria-label="Layers"></div>
+      </div>
+      <div class="fab-stack">
+        <button class="icon-btn" id="z-in" title="Zoom in"><span class="msi">zoom_in</span></button>
+        <button class="icon-btn" id="z-out" title="Zoom out"><span class="msi">zoom_out</span></button>
+        <button class="icon-btn" id="z-fit" title="Fit to screen"><span class="msi">fit_screen</span></button>
+        <button class="icon-btn" id="t-labels" title="Toggle labels"><span class="msi">label</span></button>
+        <button class="icon-btn" id="t-physics" title="Physics on/off"><span class="msi">play_arrow</span></button>
+      </div>
+      <div class="empty hidden" id="empty">
+        <div class="inner">
+          <img src="/static/favicon.svg" alt="" width="72" height="72">
+          <h2>Map your agent transcripts</h2>
+          <p>Upload a <b>.zip</b> laid out as <code>host/user/harness/transcript.json</code>.
+             SynthSift extracts people, places, files, IPs, ingredients, vehicles, tool calls and thoughts – no LLM involved.</p>
+          <div class="actions">
+            <button class="btn filled" id="empty-upload"><span class="msi">upload_file</span>Upload zip</button>
+            <button class="btn tonal" id="empty-samples"><span class="msi">dataset</span>Load sample transcripts</button>
+          </div>
+        </div>
+      </div>
+      <div class="tooltip" id="tooltip" role="tooltip"></div>
+    </section>
+
+    <div class="splitter" id="splitter" title="Drag to resize"></div>
+
+    <aside class="panel" id="right">
+      <div class="panel-head">
+        <div class="tabs">
+          <button class="tab on" data-tab="transcript"><span class="msi sm">forum</span>Transcript</button>
+          <button class="tab" data-tab="matches"><span class="msi sm">format_list_bulleted</span>Matches <span class="badge soft hidden" id="match-count">0</span></button>
+          <span class="spacer"></span>
+          <button class="icon-btn sm" id="underline-toggle" title="Underline extracted entities"><span class="msi">label</span></button>
+        </div>
+        <div class="ctx-controls" id="ctx-controls">
+          <span>Context</span>
+          <label><span class="hash">#</span> before
+            <span class="stepper"><button class="icon-btn sm" data-step="before:-1"><span class="msi xs">remove</span></button>
+            <input id="ctx-before" type="number" min="0" max="20" value="1">
+            <button class="icon-btn sm" data-step="before:1"><span class="msi xs">add</span></button></span></label>
+          <label><span class="hash">#</span> after
+            <span class="stepper"><button class="icon-btn sm" data-step="after:-1"><span class="msi xs">remove</span></button>
+            <input id="ctx-after" type="number" min="0" max="20" value="1">
+            <button class="icon-btn sm" data-step="after:1"><span class="msi xs">add</span></button></span></label>
+        </div>
+      </div>
+      <div class="selection hidden" id="selection"></div>
+      <div class="panel-body" id="panel-body"></div>
+    </aside>
+  </main>
+
+  <div class="drop-overlay" id="drop"><div class="card"><span class="msi">folder_zip</span>Drop transcript zips to upload</div></div>
+  <div class="snackbar" id="snackbar"><span class="grow" id="snack-text"></span><button class="btn text sm hidden" id="snack-action"></button></div>
+  <input type="file" id="file" accept=".zip,application/zip" multiple hidden>
+
+  <script src="/vendor/vis/vis-network.min.js"></script>
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

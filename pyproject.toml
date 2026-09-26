@@ -1,0 +1,38 @@
+[project]
+name = "synthsift"
+version = "0.1.0"
+description = "Non-LLM analysis of LLM agent transcripts: NLP entity extraction + interactive knowledge/flow graph."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
+    "spacy>=3.7,<3.9",
+    "en-core-web-sm",
+    "networkx>=3.2",
+    "pyvis>=0.3.2",
+    "nltk>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+synthsift = "synthsift.cli:main"
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27", "playwright>=1.44"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/synthsift"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
