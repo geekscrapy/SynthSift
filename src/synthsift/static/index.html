@@ -50,6 +50,7 @@
           <label class="mini-select" title="Filter by user"><span class="msi xs">person</span><select id="f-user"></select></label>
           <label class="mini-select" title="Filter by agent / harness"><span class="msi xs">terminal</span><select id="f-harness"></select></label>
         </div>
+        <button class="chip sm conv-focus hidden" id="f-conv" title="Showing one conversation – click to clear"><span class="msi xs">forum</span><span class="label"></span><span class="msi xs">close</span></button>
         <label class="search compact">
           <span class="msi sm">travel_explore</span>
           <input id="conv-q" type="search" placeholder="Find conversations containing…" autocomplete="off">
@@ -80,6 +81,17 @@
       <div id="graph"></div>
       <div class="graph-toolbar">
         <div class="layer-chips" id="layers" role="group" aria-label="Layers"></div>
+        <label class="mini-select cluster-select" title="Cluster the graph by conversation, host, user or agent">
+          <span class="msi xs">workspaces</span>
+          <select id="cluster-mode">
+            <option value="auto">Cluster: auto</option>
+            <option value="off">Cluster: off</option>
+            <option value="conversation">By conversation</option>
+            <option value="host">By host</option>
+            <option value="user">By user</option>
+            <option value="agent">By agent</option>
+          </select>
+        </label>
         <div class="layer-chips">
           <button class="chip" id="t-flagged" title="Fade everything without a security finding"><span class="msi sm">shield</span>Flagged</button>
         </div>

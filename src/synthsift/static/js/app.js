@@ -61,6 +61,8 @@
     dock: store.get("dock", "right"),
     panelOnly: new URLSearchParams(location.search).get("view") === "panel",
     popout: null,
+    clusterMode: store.get("clusterMode", null),
+    clusters: new Map(),
   };
   const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
   const sevRank = (s) => SEV_ORDER.indexOf(s);
@@ -346,7 +348,8 @@
     const c = S.convs.get(cid);
     if (!c) return false;
     const f = S.filter;
-    return (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness);
+    return (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness)
+      && (!f.conv || c.id === f.conv);
   }
   const convVisible = (c) => !S.hiddenConvs.has(c) && convMatchesFilter(c);
 
@@ -374,7 +377,12 @@
   }
   function applyFilters() {
     computeVisible();
-    if (nodesView) { nodesView.refresh(); edgesView.refresh(); }
+    if (nodesView) {
+      unclusterAll();
+      nodesView.refresh();
+      edgesView.refresh();
+      applyClustering();
+    }
     if (S.layout === "layers") applyLayout(false);
     renderStats(S.data && S.data.stats);
     store.set("hiddenConvs", [...S.hiddenConvs]);
@@ -700,6 +708,8 @@
     network = new vis.Network($("graph"), { nodes: nodesView, edges: edgesView }, options);
     S.physics = true;
     updatePhysicsButton();
+    S.clusters.clear();
+    applyClustering({ settle: false });
     network.on("stabilizationProgress", (p) => {
       const bar = $("progress");
       bar.classList.remove("hidden", "indeterminate");
@@ -719,8 +729,12 @@
       hideTip();
       openTagMenu(target, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y);
     });
-    network.on("doubleClick", (p) => { if (p.nodes.length) network.focus(p.nodes[0], { scale: Math.max(1.2, network.getScale()), animation: { duration: 500 } }); });
-    network.on("hoverNode", (p) => showNodeTip(p.node));
+    network.on("doubleClick", (p) => {
+      if (!p.nodes.length) return;
+      if (network.isCluster(p.nodes[0])) { openClusterNode(p.nodes[0]); settleLayout(); renderStats(S.data && S.data.stats); return; }
+      network.focus(p.nodes[0], { scale: Math.max(1.2, network.getScale()), animation: { duration: 500 } });
+    });
+    network.on("hoverNode", (p) => (network.isCluster(p.node) ? clusterTip(p.node) : showNodeTip(p.node)));
     network.on("blurNode", hideTip);
     network.on("hoverEdge", (p) => showEdgeTip(p.edge));
     network.on("blurEdge", hideTip);
@@ -857,7 +871,225 @@
     for (const b of $("layout-toggle").querySelectorAll("button")) b.classList.toggle("on", b.dataset.layout === layout);
     api("/api/settings", { method: "PUT", body: { layout } }).catch(() => {});
     S.settings.layout = layout;
+    applyClustering();
     applyLayout(true);
+  }
+
+  /* ======================================================== clustering */
+  const CLUSTER_LEVELS = ["host", "user", "agent", "conversation"];
+  const CLUSTER_ICON = { host: "computer", user: "person", agent: "terminal", conversation: "forum" };
+  function groupOf(cid, mode) {
+    const c = S.convs.get(cid);
+    if (!c) return null;
+    return mode === "host" ? c.host : mode === "user" ? c.user : mode === "agent" ? c.harness : c.id;
+  }
+  function visibleGroups(mode) {
+    return new Set(S.convOrder.filter(convVisible).map((cid) => groupOf(cid, mode)));
+  }
+  function effectiveClusterMode() {
+    const mode = S.clusterMode || S.settings.cluster_mode || "auto";
+    if (mode === "off" || S.layout === "layers" || S.panelOnly) return "off";
+    if (mode !== "auto") return visibleGroups(mode).size >= 2 ? mode : "off";
+    if (S.visibleNodes.size <= (S.settings.cluster_auto_min ?? 400)) return "off";
+    for (const m of CLUSTER_LEVELS) {
+      const n = visibleGroups(m).size;
+      if (n >= 2 && n <= 40) return m;
+    }
+    return "off";
+  }
+  // members of an opened cluster never had a layout while hidden: fan them out around the cluster
+  function spreadRelease(center, contained) {
+    const out = {};
+    Object.keys(contained).forEach((id, i) => {
+      const a = i * 2.39996, r = 28 * Math.sqrt(i + 1);
+      out[id] = { x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) };
+    });
+    return out;
+  }
+  function openClusterNode(id) {
+    try { if (network.isCluster(id)) network.openCluster(id, { releaseFunction: spreadRelease }); } catch (e) { /* already gone */ }
+    S.clusters.delete(id);
+  }
+  function unclusterAll() {
+    if (!network) return;
+    if (S.clusters.size) S.justUnclustered = true;
+    for (const id of [...S.clusters.keys()]) openClusterNode(id);
+    S.clusters.clear();
+  }
+  // Group every visible node; terms seen in more than one group stay outside so they link the clusters.
+  function applyClustering({ settle = true } = {}) {
+    if (!network) return;
+    unclusterAll();
+    const mode = effectiveClusterMode();
+    $("cluster-mode").closest(".mini-select").classList.toggle("active", mode !== "off");
+    if (mode === "off") {
+      // clusters were just opened (e.g. a cluster was clicked): lay their members out
+      if (settle && S.justUnclustered) settleLayout();
+      S.justUnclustered = false;
+      return;
+    }
+    const members = new Map();
+    for (const id of S.visibleNodes) {
+      const n = S.nodes.get(id);
+      const groups = new Set((n.conv || []).filter(convVisible).map((cid) => groupOf(cid, mode)));
+      if (groups.size !== 1) continue; // shared term (or hub): keep it outside
+      const g = [...groups][0];
+      if (!members.has(g)) members.set(g, new Set());
+      members.get(g).add(id);
+    }
+    const convsIn = new Map();
+    for (const cid of S.convOrder.filter(convVisible)) {
+      const g = groupOf(cid, mode);
+      if (!convsIn.has(g)) convsIn.set(g, []);
+      convsIn.get(g).push(cid);
+    }
+    for (const [g, set] of members) {
+      if (set.size < 2) continue;
+      const id = `cluster:${mode}:${g}`;
+      const convs = convsIn.get(g) || [];
+      let sev = null;
+      const tags = new Set();
+      for (const nid of set) {
+        const n = S.nodes.get(nid);
+        if (n.sec && (!sev || sevRank(n.sec) > sevRank(sev))) sev = n.sec;
+        for (const t of nodeTags(nid)) tags.add(t);
+      }
+      const color = mode === "conversation" ? (S.convs.get(g) || {}).color : hashColor(mode + ":" + g);
+      const label = mode === "conversation" ? (S.convs.get(g) || {}).title || g : g;
+      S.clusters.set(id, { id, mode, key: g, label, color, count: set.size, convs, sev, tags: [...tags] });
+      network.cluster({
+        joinCondition: (opts) => set.has(opts.id),
+        clusterNodeProperties: { id, shape: "custom", ctxRenderer: renderCluster, label, allowSingleNodeCluster: false,
+          mass: 1 + Math.sqrt(set.size) / 2, size: clusterRadius({ count: set.size }) },
+        clusterEdgeProperties: { color: { color: rgba(GC.outline, 0.5), inherit: false }, width: 1.2, smooth: smoothOption(), arrows: "" },
+      });
+    }
+    if (settle && (S.clusters.size || S.justUnclustered)) settleLayout();
+    S.justUnclustered = false;
+  }
+  // new cluster nodes start at their members' centre; give physics a moment to spread them out
+  function settleLayout() {
+    if (!network) return;
+    network.setOptions({ physics: { ...physicsOptions(true), stabilization: false } });
+    S.physics = true;
+    updatePhysicsButton();
+    // small views can afford a longer settle; big ones stay responsive
+    network.stabilize(Math.round(Math.min(400, Math.max(120, 30000 / Math.max(1, S.visibleNodes.size)))));
+    network.once("stabilized", () => {
+      if (!S.settings.keep_physics) setPhysics(false);
+      network.fit({ animation: { duration: 300 } });
+    });
+  }
+
+  function hashColor(key) {
+    let h = 0;
+    for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return ["#1A73E8", "#D93025", "#188038", "#9334E6", "#E8710A", "#129EAF", "#E52592", "#185ABC", "#B06000", "#137333"][h % 10];
+  }
+  // open the cluster a node is hidden in, so it can be selected / focused
+  function revealNode(id) {
+    if (!network) return;
+    try {
+      const path = network.findNode(id);
+      if (path && path.length > 1) { openClusterNode(path[0]); settleLayout(); }
+    } catch (e) { /* not clustered */ }
+  }
+  function clusterRadius(c) { return Math.max(22, Math.min(80, 16 + 7 * Math.sqrt(c.count))); }
+  function renderCluster({ ctx, id, x, y, state: { selected, hover } }) {
+    const c = S.clusters.get(id) || { label: id, count: 0, color: "#5F6368", mode: "conversation", tags: [] };
+    const r = clusterRadius(c);
+    const fs = (S.settings.font_size || 13) + 1;
+    return {
+      drawNode() {
+        ctx.save();
+        if (selected || hover) { ctx.beginPath(); ctx.arc(x, y, r + 6, 0, 2 * Math.PI); ctx.lineWidth = 3; ctx.strokeStyle = GC.primary; ctx.stroke(); }
+        if (c.sev) { ctx.beginPath(); ctx.arc(x, y, r + 3, 0, 2 * Math.PI); ctx.lineWidth = 4; ctx.strokeStyle = SEV_COLOR[c.sev]; ctx.stroke(); }
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = c.color;
+        ctx.globalAlpha = 0.9;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = GC.surface;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `${Math.round(r * 0.7)}px "Material Symbols Outlined"`;
+        ctx.fillText(CLUSTER_ICON[c.mode] || "workspaces", x, y - r * 0.12);
+        ctx.font = `600 ${Math.max(10, Math.round(r * 0.28))}px Roboto, sans-serif`;
+        ctx.fillText(fmt(c.count), x, y + r * 0.45);
+        c.tags.slice(0, 3).forEach((t, i) => {
+          ctx.beginPath(); ctx.arc(x + r * 0.72 - i * 9, y - r * 0.72, 5.5, 0, 2 * Math.PI);
+          ctx.fillStyle = tagInfo(t).color; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = GC.surface; ctx.stroke();
+        });
+        ctx.restore();
+      },
+      drawExternalLabel() {
+        ctx.save();
+        const text = truncate(c.label, 36);
+        ctx.font = `500 ${fs}px Roboto, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = GC.surface;
+        ctx.strokeText(text, x, y + r + 6);
+        ctx.fillStyle = GC.ink;
+        ctx.fillText(text, x, y + r + 6);
+        ctx.font = `${fs - 3}px Roboto, sans-serif`;
+        const sub = `${c.mode} · ${plural(c.convs.length, "conversation")}`;
+        ctx.strokeText(sub, x, y + r + 8 + fs);
+        ctx.fillStyle = GC.inkVariant;
+        ctx.fillText(sub, x, y + r + 8 + fs);
+        ctx.restore();
+      },
+      nodeDimensions: { width: 2 * r, height: 2 * r },
+    };
+  }
+
+  // Clicking a cluster narrows the whole workspace to it; in auto mode the next level then clusters (drill-down).
+  function focusCluster(id) {
+    const c = S.clusters.get(id);
+    if (!c) return;
+    const f = { ...S.filter };
+    if (c.mode === "host") Object.assign(f, { host: c.key, user: "", harness: "", conv: "" });
+    else if (c.mode === "user") Object.assign(f, { user: c.key, harness: "", conv: "" });
+    else if (c.mode === "agent") Object.assign(f, { harness: c.key, conv: "" });
+    else f.conv = c.key;
+    S.filter = f;
+    store.set("convFilter", S.filter);
+    if (c.mode === "conversation") S.currentConv = c.key;
+    renderFilters();
+    afterConvToggle();
+    snack(`Filtered to ${c.mode} “${c.label}”`, { label: "Undo", run: () => clearClusterFocus(c.mode) }, 5000);
+  }
+  function clearClusterFocus(mode) {
+    const f = { ...S.filter };
+    if (mode === "host") f.host = "";
+    else if (mode === "user") f.user = "";
+    else if (mode === "agent") f.harness = "";
+    f.conv = "";
+    S.filter = f;
+    store.set("convFilter", S.filter);
+    renderFilters();
+    afterConvToggle();
+  }
+  function clusterTip(id) {
+    const c = S.clusters.get(id);
+    if (!c) return;
+    const tip = $("tooltip");
+    tip.replaceChildren(
+      el("div", { class: "tt-head" }, el("span", { class: "ico", style: { background: c.color } }, icon(CLUSTER_ICON[c.mode], "sm")),
+        el("div", { class: "grow" }, el("div", { class: "tt-title" }, c.label),
+          el("div", { class: "tt-sub" }, `${c.mode} cluster · ${plural(c.count, "node")} · ${plural(c.convs.length, "conversation")}`))),
+      c.sev ? el("div", { class: `tt-foot sev-${c.sev}` }, el("span", { class: "sev-chip" }, c.sev), " highest finding inside") : null,
+      c.tags.length ? el("div", { class: "tt-foot", html: "Tags inside: " + tagChipsHTML(c.tags) }) : null,
+      el("div", { class: "tt-foot" }, "Click to filter to this cluster · double-click to expand it in place"));
+    placeTip();
   }
 
   /* =========================================================== tooltip */
@@ -933,6 +1165,7 @@
 
   function onClick(p) {
     hideTip();
+    if (p.nodes.length && network && network.isCluster(p.nodes[0])) { focusCluster(p.nodes[0]); return; }
     if (p.nodes.length) selectNode(p.nodes[0]);
     else if (!p.edges.length) clearSelection();
   }
@@ -943,6 +1176,7 @@
     S.selected = id;
     S.neighbors = new Set([id, ...(S.edgesByNode.get(id) || []).map((e) => (e.from === id ? e.to : e.from))]);
     if (network && S.visibleNodes.has(id)) {
+      revealNode(id);
       network.selectNodes([id]);
       if (focus) network.focus(id, { scale: Math.max(network.getScale(), 0.9), animation: { duration: 450 } });
     }
@@ -1858,7 +2092,7 @@
     broadcast({ type: "filters", hiddenConvs: [...S.hiddenConvs], filter: S.filter });
     applyFilters();
     if (!convVisible(S.currentConv)) S.currentConv = S.convOrder.find(convVisible) || S.currentConv;
-    if (network && S.visibleNodes.size) network.fit({ nodes: [...S.visibleNodes], animation: { duration: 400 } });
+    if (network && S.visibleNodes.size && !S.clusters.size) network.fit({ nodes: [...S.visibleNodes], animation: { duration: 400 } });
     renderTree();
     renderLegend();
     renderLayers();
@@ -1883,6 +2117,10 @@
         ...vals.map((v) => el("option", { value: v, selected: f[key] === v }, v)));
       sel.closest(".mini-select").classList.toggle("active", !!f[key]);
     }
+    const chip = $("f-conv");
+    if (f.conv && !S.convs.has(f.conv)) f.conv = "";
+    chip.classList.toggle("hidden", !f.conv);
+    if (f.conv) chip.querySelector(".label").textContent = S.convs.get(f.conv).title;
   }
 
   function runConvSearch(q) {
@@ -1953,11 +2191,12 @@
     if (!st) { box.textContent = "No data yet"; return; }
     let visEdges = 0;
     if (S.data) for (const e of S.data.edges) if (edgeOk(e)) visEdges++;
-    box.replaceChildren(
+    box.replaceChildren(...[
       el("span", {}, `${fmt(S.visibleNodes.size)} / ${fmt(st.nodes)} nodes`),
       el("span", {}, `${fmt(visEdges)} / ${fmt(st.edges)} edges`),
       el("span", {}, `${fmt(st.entities)} entities`),
-      el("span", {}, `${fmt(st.paragraphs)} paragraphs`));
+      S.clusters.size ? el("span", {}, `${fmt(S.clusters.size)} clusters`) : null,
+      el("span", {}, `${fmt(st.paragraphs)} paragraphs`)].filter(Boolean));
   }
   function renderWarnings(ws) {
     $("warnings").replaceChildren(...(ws || []).slice(0, 50).map((w) => el("li", {}, icon("warning", "xs"), el("span", {}, w))));
@@ -2176,6 +2415,15 @@
     });
     $("tag-clear").addEventListener("click", () => { S.tagFilter.clear(); store.set("tagFilter", []); afterTagFilter(); });
     $("t-flagged").addEventListener("click", () => setFlaggedOnly(!S.flaggedOnly));
+    $("cluster-mode").value = S.clusterMode || "auto";
+    $("cluster-mode").addEventListener("change", (e) => {
+      S.clusterMode = e.target.value;
+      store.set("clusterMode", S.clusterMode);
+      applyClustering();
+      if (!S.clusters.size) settleLayout();
+      renderStats(S.data && S.data.stats);
+    });
+    $("f-conv").addEventListener("click", () => clearClusterFocus("conversation"));
     $("btn-dock").addEventListener("click", (e) => { e.stopPropagation(); dockMenu(e.currentTarget); });
     $("popped-note").addEventListener("click", dockBack);
     window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

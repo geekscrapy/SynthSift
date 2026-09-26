@@ -166,6 +166,13 @@ SCHEMA: list[Field] = [
     Field("damping", "Damping", "float", 0.4, "view", S_LAYOUT, min=0, max=1, step=0.05),
     Field("avoid_overlap", "Avoid overlap", "float", 0.2, "view", S_LAYOUT, min=0, max=1, step=0.05),
     Field("stabilization", "Stabilisation iterations", "int", 250, "view", S_LAYOUT, min=0, max=3000, step=50),
+    Field("cluster_mode", "Clustering", "select", "auto", "view", S_LAYOUT,
+          "Collapse the graph into one node per conversation, host, user or agent. Terms shared between groups "
+          "stay outside so you can see what links them. auto picks host → user → agent → conversation and "
+          "drills down when you click a cluster.",
+          options=["auto", "off", "conversation", "host", "user", "agent"]),
+    Field("cluster_auto_min", "Auto-cluster above", "int", 400, "view", S_LAYOUT,
+          "In auto mode, only cluster when more than this many nodes are visible.", min=0, max=20000, step=50),
     Field("keep_physics", "Keep physics running", "bool", False, "view", S_LAYOUT,
           "Otherwise physics freezes after stabilising (smoother on big graphs)."),
     Field("layer_gap", "Layer spacing (layers layout)", "int", 200, "view", S_LAYOUT, min=80, max=1200, step=10),
