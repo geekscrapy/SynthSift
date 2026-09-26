@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -219,6 +220,8 @@ def coerce(key: str, value: Any) -> Any:
         return [v for v in (value or []) if not f.options or v in f.options]
     if f.type == "select":
         return value if value in f.options else f.default
+    if f.type == "color":
+        return value if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{3,8}", value) else f.default
     return "" if value is None else str(value)
 
 

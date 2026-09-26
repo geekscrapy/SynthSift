@@ -205,7 +205,16 @@
   }
 
   const kindKey = (n) => (n.type === "entity" ? n.category : n.type);
-  const kindOf = (n) => S.kinds.get(kindKey(n)) || { color: "#9aa0a6", icon: "circle", label: kindKey(n), group: "Other" };
+  // categories invented in Settings → Custom vocabulary get a stable colour of their own
+  const EXTRA_COLORS = ["#7B1FA2", "#00897B", "#C0CA33", "#6D4C41", "#3949AB", "#D81B60", "#00ACC1", "#F4511E"];
+  function customKind(key) {
+    let h = 0;
+    for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const k = { key, label: key.replace(/_/g, " "), group: "Custom", icon: "label", color: EXTRA_COLORS[h % EXTRA_COLORS.length] };
+    S.kinds.set(key, k);
+    return k;
+  }
+  const kindOf = (n) => S.kinds.get(kindKey(n)) || customKind(kindKey(n));
   const convVisible = (c) => !S.hiddenConvs.has(c);
 
   /* =========================================================== filters */
@@ -1277,12 +1286,12 @@
     }
     const groups = new Map();
     for (const [key, n] of counts) {
-      const k = S.kinds.get(key) || { key, label: key, group: "Other", color: "#9aa0a6" };
+      const k = S.kinds.get(key) || customKind(key);
       const g = STRUCTURAL.has(key) ? "Conversation structure" : k.group || "Other";
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push({ ...k, key, n });
     }
-    const order = ["Conversation structure", "Technical", "People & orgs", "Places", "Things", "Time & numbers", "Other"];
+    const order = ["Conversation structure", "Custom", "Technical", "People & orgs", "Places", "Things", "Time & numbers", "Other"];
     const frag = document.createDocumentFragment();
     for (const g of [...groups.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b))) {
       const items = groups.get(g).sort((a, b) => b.n - a.n);
