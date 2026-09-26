@@ -350,6 +350,7 @@
 
     // structural node: Material "chip"
     const small = n.type === "tool_arg";
+    const lod = scale * fs < 3.5; // too small to read: draw a plain pill, skip text
     const f = small ? `${fs - 1}px "Roboto Mono", monospace` : `500 ${fs}px Roboto, sans-serif`;
     const text = truncate(n.label, small ? (s.label_max || 32) + 12 : s.label_max || 32);
     const iconSize = fs + 5;
@@ -373,6 +374,7 @@
           if (n.type === "thought") { ctx.setLineDash([4, 3]); ctx.lineWidth = 2; ctx.strokeStyle = GC.surface; ctx.stroke(); ctx.setLineDash([]); }
           if (n.error) { ctx.lineWidth = 3; ctx.strokeStyle = "#d93025"; ctx.stroke(); }
         }
+        if (lod) { ctx.restore(); return; }
         const ink = small ? GC.ink : "#ffffff";
         ctx.fillStyle = small ? color : ink;
         ctx.textAlign = "left";
@@ -388,12 +390,32 @@
     };
   }
 
+  // vis-network re-parses colours with an opacity on every frame; pre-baked rgba() strings are much cheaper
+  const rgbaCache = new Map();
+  function rgba(color, alpha) {
+    const key = color + "|" + alpha;
+    let v = rgbaCache.get(key);
+    if (v) return v;
+    let r = 128, g = 128, b = 128, a = alpha;
+    const m = String(color).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (m) {
+      const h = m[1].length === 3 ? m[1].replace(/./g, "$&$&") : m[1];
+      r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16);
+    } else {
+      const mm = String(color).match(/rgba?\(([^)]+)\)/);
+      if (mm) { const p = mm[1].split(",").map(Number); [r, g, b] = p; a = alpha * (p[3] ?? 1); }
+    }
+    v = `rgba(${r},${g},${b},${a})`;
+    rgbaCache.set(key, v);
+    return v;
+  }
+
   function edgeStyle(e) {
     const s = S.settings;
     const conv = e.conv ? S.convs.get(e.conv) : null;
     const labels = s.edge_labels || "relations";
     const base = { id: e.id, from: e.from, to: e.to, arrows: s.arrows === false ? "" : { to: { enabled: true, scaleFactor: 0.45 } } };
-    const col = (c, o = 1) => ({ color: c, highlight: c, hover: c, opacity: o });
+    const col = (c, o = 1) => { const v = rgba(c, o); return { color: v, highlight: v, hover: v, inherit: false }; };
     const purple = S.kinds.get("thought")?.color || "#9334e6";
     let style;
     switch (e.type) {
@@ -428,10 +450,12 @@
           label: labels === "all" && e.label ? e.label : undefined, font: { size: 10, color: GC.inkVariant, strokeWidth: 3, strokeColor: GC.surface } };
         if (e.thought) style.dashes = [3, 3];
     }
-    if (S.neighbors && !(S.neighbors.has(e.from) && S.neighbors.has(e.to) && (e.from === S.selected || e.to === S.selected))) {
-      style.color = { ...style.color, opacity: 0.08 };
+    if (S.neighbors && !bigEdges() && !(S.neighbors.has(e.from) && S.neighbors.has(e.to) && (e.from === S.selected || e.to === S.selected))) {
+      const v = rgba(style.color.color, 0.08);
+      style.color = { color: v, highlight: v, hover: v, inherit: false };
       style.label = undefined;
     }
+    if (bigEdges() && (e.type === "mention" || e.type === "cooccurs")) style.arrows = "";
     return { ...base, ...style };
   }
 
@@ -447,11 +471,20 @@
         springConstant: (s.spring_constant ?? 0.08) / 2, damping: s.damping ?? 0.4, avoidOverlap: s.avoid_overlap ?? 0.2 },
       repulsion: { nodeDistance: (s.spring_length ?? 120) * 0.9, centralGravity: 0, springLength: (s.spring_length ?? 120) * 0.8,
         springConstant: 0.03, damping: 0.5 },
-      stabilization: { enabled: true, iterations: s.stabilization ?? 250, updateInterval: 25, fit: true },
+      stabilization: { enabled: true, iterations: stabilizationIterations(), updateInterval: 25, fit: true },
       minVelocity: 1,
       maxVelocity: 60,
     };
   }
+
+  // Big graphs get proportionally fewer layout iterations so the page stays responsive.
+  const BIG = 1500;
+  function stabilizationIterations() {
+    const base = S.settings.stabilization ?? 250;
+    const n = S.visibleNodes.size || 1;
+    return n <= BIG ? base : Math.max(40, Math.round((base * BIG) / n));
+  }
+  const bigEdges = () => S.data && S.data.edges.length > 6000;
 
   function buildNetwork() {
     GC = graphColors();
@@ -479,7 +512,7 @@
     const options = {
       autoResize: true,
       layout: { improvedLayout: S.nodes.size < 400, randomSeed: 7 },
-      physics: physicsOptions(true),
+      physics: physicsOptions(!(S.layout === "layers" && S.visibleNodes.size > BIG)),
       interaction: { hover: true, tooltipDelay: 3600000, hideEdgesOnDrag: S.nodes.size > 1500, hideEdgesOnZoom: S.nodes.size > 3000,
         multiselect: false, navigationButtons: false, keyboard: false, zoomSpeed: 0.8 },
       edges: { smooth: smoothOption(), selectionWidth: 1.5, hoverWidth: 0.5 },
@@ -511,12 +544,12 @@
 
   function smoothOption() {
     const t = S.settings.edge_smooth || "continuous";
-    if (t === "straight") return false;
+    if (t === "straight" || bigEdges()) return false; // curves are costly with many edges
     return { enabled: true, type: t, roundness: 0.35 };
   }
 
-  function restyleEdges() {
-    if (!edgesDS) return;
+  function restyleEdges(force = false) {
+    if (!edgesDS || (bigEdges() && !force)) return;
     edgesDS.update(S.data.edges.map(edgeStyle));
   }
 
@@ -544,12 +577,15 @@
     const s = S.settings;
     const updates = [];
     if (S.layout !== "layers") {
-      for (const id of S.nodes.keys()) updates.push({ id, fixed: false });
-      nodesDS.update(updates);
+      if (S.fixedApplied) {
+        for (const id of S.nodes.keys()) updates.push({ id, fixed: false });
+        nodesDS.update(updates);
+        S.fixedApplied = false;
+      }
       network.setOptions({ physics: physicsOptions(true) });
       S.physics = true;
       updatePhysicsButton();
-      if (stabilize) network.stabilize(s.stabilization ?? 250);
+      if (stabilize) network.stabilize(stabilizationIterations());
       network.once("stabilized", () => { if (!s.keep_physics) setPhysics(false); });
       return;
     }
@@ -604,12 +640,27 @@
         updates.push({ id, x: x + hashJitter(id + "x") * step, y, fixed: { x: false, y: true } });
       }
     }
+    if (S.visibleNodes.size > BIG) {
+      // DataSet updates are slow for thousands of nodes; move them directly and keep physics off
+      if (S.physics) setPhysics(false);
+      $("progress").classList.add("hidden");
+      // network.moveNode() queues one full redraw per node, so set positions on the body directly
+      const bodyNodes = network.body && network.body.nodes;
+      for (const u of updates) {
+        const nd = bodyNodes && bodyNodes[u.id];
+        if (nd) { nd.x = u.x; nd.y = u.y; } else network.moveNode(u.id, u.x, u.y);
+      }
+      if (stabilize) network.fit({ animation: false });
+      network.redraw();
+      return;
+    }
     nodesDS.update(updates);
+    S.fixedApplied = true;
     network.setOptions({ physics: physicsOptions(true) });
     S.physics = true;
     updatePhysicsButton();
     if (stabilize) {
-      network.stabilize(Math.min(s.stabilization ?? 250, 200));
+      network.stabilize(Math.min(stabilizationIterations(), 200));
       network.once("stabilized", () => { if (!s.keep_physics) setPhysics(false); network.fit({ animation: { duration: 400 } }); });
     }
   }
@@ -856,9 +907,19 @@
       el("span", { class: "tag" }, icon("terminal", "xs"), c.harness), c.model ? el("span", { class: "tag" }, icon("smart_toy", "xs"), c.model) : null,
       el("span", { class: "tag", title: c.source }, icon("description", "xs"), c.session));
     const collapse = S.settings.collapse_tool_results !== false;
-    let html = "";
-    for (const ev of S.data.events) {
-      if (ev.c !== cid) continue;
+    // long conversations render a window of events around the target
+    const evs = S.data.events.filter((e) => e.c === cid);
+    const WINDOW = 250;
+    let from = 0;
+    if (evs.length > WINDOW) {
+      const target = scrollTo ? evs.findIndex((e) => e.p.includes(scrollTo)) : -1;
+      from = target >= 0 ? Math.max(0, target - WINDOW / 2) : S.windowStart?.[cid] || 0;
+      from = Math.min(from, evs.length - WINDOW);
+      (S.windowStart ||= {})[cid] = from;
+    }
+    const to = Math.min(evs.length, from + WINDOW);
+    let html = from > 0 ? `<button class="btn tonal sm" data-window="${from - WINDOW}" style="margin:8px auto;display:flex"><span class="msi">expand_less</span>Show ${fmt(Math.min(from, WINDOW))} earlier steps</button>` : "";
+    for (const ev of evs.slice(from, to)) {
       const long = ev.type === "tool_result" && collapse && ev.p.reduce((a, pid) => a + S.paras.get(pid).t.length, 0) > 700;
       const hasMark = scrollTo && ev.p.includes(scrollTo);
       const cls = `msg ${ev.type}${ev.error ? " error" : ""}${long && !hasMark ? " collapsed" : ""}`;
@@ -868,6 +929,7 @@
         `<div class="msg-body">${ev.p.map((pid) => paraHTML(S.paras.get(pid))).join("")}</div>` +
         (long && !hasMark ? `<button class="btn text sm expand-btn" data-expand="1"><span class="msi">expand_more</span>Show full result</button>` : "") + `</div>`;
     }
+    if (to < evs.length) html += `<button class="btn tonal sm" data-window="${to}" style="margin:8px auto;display:flex"><span class="msi">expand_more</span>Show ${fmt(Math.min(WINDOW, evs.length - to))} later steps (${fmt(evs.length - to)} remaining)</button>`;
     const list = el("div", { html });
     body.replaceChildren(head, meta, list);
     if (scrollTo) {
@@ -973,6 +1035,12 @@
       const id = jump.dataset.jump;
       if (S.visibleNodes.has(id)) { selectNode(id, { quiet: true }); network.focus(id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } }); }
       else snack("That node is hidden by the current filters.");
+      return;
+    }
+    const win = t.closest("[data-window]");
+    if (win) {
+      (S.windowStart ||= {})[S.currentConv] = Math.max(0, Number(win.dataset.window));
+      renderTranscript();
       return;
     }
     const exp = t.closest("[data-expand]");
@@ -1365,7 +1433,7 @@
       S.theme = SS.applyTheme(cur === "auto" && next === SS.effectiveTheme("auto") ? "auto" : next);
       $("btn-theme").querySelector(".msi").textContent = S.theme === "dark" ? "light_mode" : "dark_mode";
       GC = graphColors();
-      restyleEdges();
+      restyleEdges(true);
       network && network.redraw();
     });
     $("btn-left").addEventListener("click", () => { const l = $("layout").classList.toggle("left-closed"); store.set("leftClosed", l); });
