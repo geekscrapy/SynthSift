@@ -128,6 +128,46 @@ def create_app(workspace: Workspace) -> FastAPI:
         ws().schedule("analyze")
         return {"values": ws().settings.values}
 
+    # ------------------------------------------------------- annotations
+    @app.get("/api/annotations")
+    def get_annotations() -> dict:
+        return ws().annotations.to_json()
+
+    @app.put("/api/annotations")
+    async def put_annotation(request: Request) -> dict:
+        body = await request.json()
+        target = str(body.get("target", ""))
+        try:
+            ann = ws().annotations.upsert(
+                target, list(body.get("tags") or []), str(body.get("comment") or ""),
+                str(body.get("label") or ""), body.get("conv"), body.get("ts"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"annotation": ann.model_dump() if ann else None, "tags": ws().annotations.tags()}
+
+    @app.delete("/api/annotations")
+    def delete_annotation(target: str) -> dict:
+        return {"deleted": ws().annotations.delete(target)}
+
+    @app.post("/api/tags")
+    async def add_tag(request: Request) -> dict:
+        body = await request.json()
+        try:
+            ws().annotations.add_tag(str(body.get("name", "")), str(body.get("color") or "#5F6368"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"tags": ws().annotations.tags()}
+
+    @app.delete("/api/tags")
+    def remove_tag(name: str) -> dict:
+        ws().annotations.remove_tag(name)
+        return {"tags": ws().annotations.tags()}
+
+    @app.get("/api/annotations/export")
+    def export_annotations() -> Response:
+        return Response(ws().annotations.export(), media_type="application/json",
+                        headers={"Content-Disposition": 'attachment; filename="synthsift-annotations.json"'})
+
     # ------------------------------------------------------------ export
     def _selected(convs: str | None):
         if ws().graph is None:

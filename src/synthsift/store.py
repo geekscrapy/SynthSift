@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import categories
+from .annotations import AnnotationStore
 from .graph.builder import build_graph, graph_to_json
 from .ingest import read_zip
 from .models import Conversation
@@ -71,6 +72,7 @@ class Workspace:
         self.uploads = data_dir / "uploads"
         self.uploads.mkdir(parents=True, exist_ok=True)
         self.settings = SettingsStore(data_dir / "settings.json")
+        self.annotations = AnnotationStore(data_dir / "annotations.json")
         self.status = Status()
         self.datasets: dict[str, Dataset] = {}
         self.conversations: list[Conversation] = []
