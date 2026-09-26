@@ -33,7 +33,7 @@ def test_end_to_end(tmp_path, sample_zip):
     assert r.status_code == 200
     st = wait(client)
     g = client.get("/api/graph").json()
-    assert g["stats"]["conversations"] == 13
+    assert g["stats"]["conversations"] == 21
     assert {n["type"] for n in g["nodes"]} >= {"user", "assistant", "thought", "tool_call", "tool_arg", "tool_result", "entity"}
     assert len(g["paragraphs"]) == g["stats"]["paragraphs"]
 

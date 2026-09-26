@@ -5,12 +5,13 @@ import pytest
 from synthsift.harnesses import ParserNotImplemented, all_parsers, get_parser, sniff_parser
 from synthsift.harnesses.example import ExampleParser
 
-STUBS = ["claude_code", "gemini", "antigravity", "hermes", "openclaw"]
+STUBS = ["gemini", "antigravity", "hermes"]
 
 
 def test_registry_has_example_and_stubs():
     names = {p.name: p for p in all_parsers()}
-    assert names["example"].implemented
+    for ready in ("example", "claude_code", "openclaw"):
+        assert names[ready].implemented
     for stub in STUBS:
         assert stub in names and not names[stub].implemented
 
@@ -18,6 +19,7 @@ def test_registry_has_example_and_stubs():
 @pytest.mark.parametrize("folder,expected", [
     ("example", "example"), ("Claude-Code", "claude_code"), ("claudecode", "claude_code"),
     ("gemini-cli", "gemini"), ("OpenClaw", "openclaw"), ("hermes_agent", "hermes"), ("openai", "example"),
+    (".claude", "claude_code"), (".openclaw", "openclaw"), ("clawdbot", "openclaw"),
 ])
 def test_folder_aliases(folder, expected):
     assert get_parser(folder).name == expected

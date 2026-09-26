@@ -225,6 +225,9 @@ class Workspace:
                 "n_events": len(evs), "n_paragraphs": sum(len(e.paragraphs) for e in evs),
                 "n_tool_calls": sum(e.type == "tool_call" for e in evs),
                 "n_thoughts": sum(e.type == "thought" for e in evs),
+                # harness details: channel, working directory, git branch, archive state, …
+                "meta": {k: v for k, v in c.meta.items()
+                         if k != "dataset" and isinstance(v, (str, int, float, bool)) and v not in ("", None)},
             })
         return out
 

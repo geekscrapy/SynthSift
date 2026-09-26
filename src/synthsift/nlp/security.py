@@ -133,14 +133,21 @@ RISKY_OPS: list[tuple[str, str, str, re.Pattern[str]]] = [
 ]
 
 # Flags that mark a filename as a *write/upload* target rather than a source.
-_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-o|-O|--output|-T|--upload-file)(?:=|\s+)(\S+)")
-_UPLOAD_DATA = re.compile(r"(?:^|\s)(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)(?:=|\s+)@?(\S+)")
+_WRITE_FLAG = re.compile(r"(?:^|\s)(?:-o|-O|--output)(?:=|\s+)(\S+)")
+# curl -T / --upload-file <file>: the file is read and sent, not written
+_UPLOAD_FILE = re.compile(r"(?:^|\s)(?:-T|--upload-file)(?:=|\s+)['\"]?([^\s'\"]+)")
+# -d @file, --data-binary @file, -F 'field=@file' (quoted or not)
+_UPLOAD_DATA = re.compile(
+    r"(?:^|\s)(?:-d|--data(?:-binary|-raw|-urlencode|-ascii)?|-F|--form)(?:=|\s+)['\"]?(?:[\w.\[\]-]+=)?@?([^\s'\"]+)")
 _REDIRECT = re.compile(r"(?<!\d)>>?\s*(\S+)")
 _METHOD_WRITE = re.compile(r"(?:^|\s)-X\s*(?:POST|PUT|PATCH)\b", re.I)
 # A fetch whose output is piped straight into an interpreter (fetch-and-run).
+# (`python -c '…'`, `perl -e …`, `python -m json.tool` read stdin as data, not code)
 _FETCH_TO_INTERP = re.compile(
     r"\b(?:curl|wget|fetch|iwr|invoke-webrequest)\b[^\n|]*\|\s*(?:sudo\s+)?"
-    r"(?:ba?sh|z?sh|dash|python[0-9.]*|perl|ruby|node|php|pwsh|powershell)\b", re.I)
+    r"(?:ba?sh|z?sh|dash|python[0-9.]*|perl|ruby|node|php|pwsh|powershell)\b(?!\s+-[cemE]\b)", re.I)
+# data piped *into* a network client, e.g. `tar c … | curl -T - host`, `… | nc host 9000`
+_PIPE_TO_NET = re.compile(r"\|\s*(?:sudo\s+)?(?:curl|wget|nc|ncat|netcat|socat|ssh|http|xh)\b", re.I)
 _REMOTE_EXEC = re.compile(r"\b(?:ssh|sshpass)\b\s+\S+", re.I)
 _DOWNLOADER = re.compile(r"\b(?:curl|wget|fetch|git\s+clone|iwr|invoke-webrequest|scp|rsync)\b", re.I)
 
@@ -150,6 +157,12 @@ class _Mention:
     key: str
     category: str
     text: str
+
+
+# Bulky text arguments of file-writing, editing and messaging tools (Write, Edit,
+# apply_patch, message …): the text is data being written, not a command.
+_BULK_ARGS = {"content", "contents", "new_string", "old_string", "old_str", "new_str", "file_text", "text", "body",
+              "patch", "edits", "new_source", "diff", "description", "prompt", "message", "instructions"}
 
 
 def command_text(arguments: dict[str, Any] | None, tool_name: str | None) -> str:
@@ -162,12 +175,45 @@ def command_text(arguments: dict[str, Any] | None, tool_name: str | None) -> str
             v = arguments[key]
             return " ".join(map(str, v)) if isinstance(v, list) else str(v)
     parts = []
-    for v in arguments.values():
+    for k, v in arguments.items():
+        if str(k).lower() in _BULK_ARGS:
+            continue
         if isinstance(v, str):
             parts.append(v)
         elif isinstance(v, (list, dict)):
             parts.append(str(v))
     return " ".join(parts)
+
+
+_HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1([^\n]*)\n(.*?)(?:\n[ \t]*\2[ \t]*(?=\n|$)|\Z)", re.S)
+_SHELL_FEED = re.compile(r"(?:^|[\s|;&(])(?:sudo\s+(?:-\S+\s+)*)?(?:ba|z|k|da|fi)?sh\b|\bssh\b")
+
+
+def strip_heredocs(cmd: str) -> str:
+    """Drop here-document bodies that are data – a Python script, a file being
+    written – so their text is not read as shell.  Bodies fed to a shell
+    (``bash <<EOF``, ``… <<EOF | sh``, ``ssh host <<EOF``) are kept."""
+    if "<<" not in cmd:
+        return cmd
+
+    def repl(m: re.Match) -> str:
+        head = cmd[cmd.rfind("\n", 0, m.start()) + 1:m.start()]
+        if _SHELL_FEED.search(head) or _SHELL_FEED.search(m.group(3)):
+            return m.group(0)
+        return f"<<{m.group(2)}{m.group(3)}"
+
+    return _HEREDOC.sub(repl, cmd)
+
+
+_SEGMENTS = re.compile(r"\|\|?|&&|;|\n")
+_HTTP_CLIENTS = {"curl", "wget", "http", "https", "xh", "httpie", "aria2c", "iwr", "irm", "invoke-webrequest",
+                 "invoke-restmethod"}
+
+
+def _http_segments(cmd: str) -> str:
+    """The parts of a command line run by an HTTP client (upload flags only mean
+    something there: ``grep -F`` or ``cut -d`` are not uploads)."""
+    return "\n".join(seg for seg in _SEGMENTS.split(cmd) if base_command(seg.strip()).lower() in _HTTP_CLIENTS)
 
 
 def base_command(cmd: str) -> str:
@@ -186,7 +232,7 @@ def base_command(cmd: str) -> str:
 
 def _write_targets(cmd: str) -> set[str]:
     out: set[str] = set()
-    for rx in (_WRITE_FLAG, _UPLOAD_DATA, _REDIRECT):
+    for rx in (_WRITE_FLAG, _REDIRECT):
         out.update(m.group(1).strip("'\"") for m in rx.finditer(cmd))
     return {t for t in out if t and not t.startswith("-")}
 
@@ -266,8 +312,11 @@ class SecurityScanner:
 
     def _tool_call(self, event, mentions: list[_Mention]) -> list[Finding]:
         findings: list[Finding] = []
-        cmd = command_text(event.arguments, event.tool_name)
+        cmd = strip_heredocs(command_text(event.arguments, event.tool_name))
         base = base_command(cmd) or (event.tool_name or "")
+        # only entities that are part of the command itself (not a heredoc body,
+        # a description or file content being written)
+        mentions = [m for m in mentions if m.text in cmd]
 
         remotes = [m for m in mentions if m.category in REMOTE_CATEGORIES
                    and not re.match(r"^(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)\b", m.key)]
@@ -296,12 +345,13 @@ class SecurityScanner:
         local_writes = [m for m in locals_ if _matches(m.text, writes) or _matches(m.key, writes)]
         local_reads = [m for m in locals_ if m not in local_writes]
         sources = local_reads + secrets  # data that could leave the host
-        piped = "|" in cmd
         lower = cmd.lower()
         s3_upload = bool(re.search(r"\b(?:aws\s+s3|gsutil|az\s+storage)\b[^\n]*\b(?:cp|sync|mv|put)\b", lower)) and \
             bool(re.search(r"\b(?:s3|gs)://", lower))
         scp_upload = base in ("scp", "rsync", "sftp") and bool(re.search(r"\S+@\S+:|:\S", cmd)) and bool(local_reads)
-        has_upload = bool(_UPLOAD_DATA.search(cmd)) or bool(_METHOD_WRITE.search(cmd)) or s3_upload or scp_upload
+        http = _http_segments(cmd)
+        has_upload = (bool(_UPLOAD_DATA.search(http)) or bool(_UPLOAD_FILE.search(http)) or bool(_METHOD_WRITE.search(http))
+                      or s3_upload or scp_upload)
         has_download = bool(_DOWNLOADER.search(cmd)) and (bool(writes) or "clone" in lower)
         fetch_run = bool(_FETCH_TO_INTERP.search(cmd))
         remote_exec = bool(_REMOTE_EXEC.match(cmd.strip())) or base in ("ssh", "sshpass")
@@ -310,7 +360,7 @@ class SecurityScanner:
         data_read = bool(re.search(
             r"\bSELECT\b[^\n]+\bFROM\b|\b(?:mysqldump|pg_dump(?:all)?|mongoexport|mongodump|sqlite3)\b|"
             r"\btar\s+-?\w*c|\bzip\s+-r\b", cmd, re.I))
-        net_send = has_upload or (piped and bool(_DOWNLOADER.search(cmd)))
+        net_send = has_upload or bool(_PIPE_TO_NET.search(cmd))
 
         emitted: set[tuple] = set()
 

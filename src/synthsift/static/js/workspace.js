@@ -628,7 +628,9 @@ const WS = (() => {
       el("dl", { class: "kv" }, el("dt", {}, "Host"), el("dd", {}, c.host), el("dt", {}, "User"), el("dd", {}, c.user),
         el("dt", {}, "Agent"), el("dd", {}, c.harness), el("dt", {}, "Model"), el("dd", {}, c.model || "–"),
         el("dt", {}, "File"), el("dd", {}, c.source), el("dt", {}, "Started"), el("dd", {}, fmtTime(c.started_at) || "–"),
-        el("dt", {}, "Size"), el("dd", {}, `${fmt(c.n_events)} steps · ${fmt(c.n_tool_calls)} tool calls · ${fmt(c.n_thoughts)} thoughts`)),
+        el("dt", {}, "Size"), el("dd", {}, `${fmt(c.n_events)} steps · ${fmt(c.n_tool_calls)} tool calls · ${fmt(c.n_thoughts)} thoughts`),
+        ...Object.entries(c.meta || {}).filter(([k]) => !["session_id", "format_version", "user_type"].includes(k))
+          .flatMap(([k, v]) => [el("dt", {}, k.replace(/_/g, " ")), el("dd", {}, String(v))])),
       fs.length ? el("div", { class: "sec-summary", style: { marginTop: "12px" } }, [...SEV_ORDER].reverse().filter((s) => bySev.get(s))
         .map((s) => el("span", { class: `chip sm sev-${s}` }, el("span", { class: "sev-chip" }, s), el("span", { class: "count" }, fmt(bySev.get(s)))))) : null,
       el("h4", {}, icon("sell", "xs"), "Tags & comment"), tagEditor("conv:" + cid),
@@ -638,7 +640,7 @@ const WS = (() => {
         el("div", { class: "nb-list" }, tagged.map(([t, a]) => el("button", { class: "chip sm", onclick: () => onSelect && onSelect(t) },
           el("span", { class: "label" }, a.label || t), el("span", { class: "tag-row", html: tagChipsHTML(a.tags) })))));
     }
-    return el("div", {}, detailHead("forum", c.color, c.title, [tag("session")], onClose), body);
+    return el("div", {}, detailHead("forum", c.color, c.title, [tag("session"), ...SS.metaChips(c.meta).slice(0, 3)], onClose), body);
   }
 
   return {

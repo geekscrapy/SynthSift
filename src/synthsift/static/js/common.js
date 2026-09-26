@@ -86,8 +86,26 @@ const SS = (() => {
     return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
   };
 
+  /** harness metadata worth showing on a conversation: [icon, text, title, extra class] */
+  const META_CHIPS = [
+    ["archive", (m) => m.archive && `${m.archive} session`, "Recovered from an archive of a deleted / reset session", "warn"],
+    ["account_tree", (m) => m.subagent && `sub-agent${m.agent_id ? " " + m.agent_id : ""}`, "Runs as a sub-agent of another session"],
+    ["forum", (m) => m.channel && `${m.channel}${m.chat_type ? " · " + m.chat_type : ""}`, "Messaging channel"],
+    ["key", (m) => m.session_key, "Session key"],
+    ["folder", (m) => m.cwd, "Working directory"],
+    ["fork_right", (m) => m.git_branch, "Git branch"],
+  ];
+  function metaChips(meta) {
+    const out = [];
+    for (const [ic, get, title, cls] of META_CHIPS) {
+      const v = meta && get(meta);
+      if (v) out.push(el("span", { class: `tag${cls ? " " + cls : ""}`, title: `${title}: ${v}` }, icon(ic, "xs"), String(v)));
+    }
+    return out;
+  }
+
   const fmt = (n) => Number(n).toLocaleString();
   const plural = (n, word, many) => `${fmt(n)} ${n === 1 ? word : many || word + "s"}`;
 
-  return { store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, fmt, plural };
+  return { store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, fmt, plural, metaChips };
 })();

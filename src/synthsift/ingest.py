@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -12,7 +13,17 @@ from pathlib import PurePosixPath
 from .harnesses import ParserNotImplemented, get_parser, sniff_parser
 from .models import Conversation
 
-TRANSCRIPT_EXTENSIONS = (".json", ".jsonl", ".ndjson")
+TRANSCRIPT_EXTENSIONS = (".json", ".jsonl", ".ndjson", ".zst", ".gz", ".sqlite", ".db")
+# archived transcripts keep ".jsonl" mid-name, e.g. "<id>.jsonl.deleted.2026-01-01T10-00-00Z"
+_ARCHIVED = re.compile(r"\.jsonl\.[^/]+$", re.I)
+_HOME = re.compile(r"^(?:/home|/Users|C:\\Users)[/\\]([^/\\]+)", re.I)
+
+
+def is_transcript_name(name: str) -> bool:
+    low = name.lower()
+    if low.endswith((".lock", "-wal", "-shm", "-journal")):
+        return False
+    return low.endswith(TRANSCRIPT_EXTENSIONS) or bool(_ARCHIVED.search(low))
 
 
 @dataclass
@@ -47,10 +58,11 @@ def locate(path: str) -> tuple[str, str, str | None, str]:
 
 
 def _is_junk(name: str) -> bool:
+    """Directories, macOS metadata and hidden files – except agent state folders
+    such as ``.claude`` or ``.openclaw`` that are hidden by design."""
     p = PurePosixPath(name)
-    return (
-        name.endswith("/")
-        or any(part.startswith(".") or part == "__MACOSX" for part in p.parts)
+    return name.endswith("/") or any(
+        part == "__MACOSX" or (part.startswith(".") and get_parser(part) is None) for part in p.parts
     )
 
 
@@ -67,11 +79,12 @@ def read_zip(data: bytes, dataset: str) -> IngestReport:
         report.warnings.append(f"not a valid zip file: {exc}")
         return report
     with zf:
+        names = set(zf.namelist())
         for info in sorted(zf.infolist(), key=lambda i: i.filename):
             name = info.filename
             if _is_junk(name):
                 continue
-            if not name.lower().endswith(TRANSCRIPT_EXTENSIONS):
+            if not is_transcript_name(name):
                 report.skipped += 1
                 continue
             report.files += 1
@@ -84,17 +97,24 @@ def read_zip(data: bytes, dataset: str) -> IngestReport:
                 if parser_cls is None:
                     report.warnings.append(f"{name}: unknown harness '{folder}' and format not recognised")
                     continue
+            parser = parser_cls()
+            parser.companions = {sfx: zf.read(name + sfx) for sfx in ("-wal",) if name + sfx in names}
             try:
-                convs = parser_cls().parse(raw, filename)
+                convs = parser.parse(raw, filename)
             except ParserNotImplemented:
                 not_implemented[parser_cls.name] = not_implemented.get(parser_cls.name, 0) + 1
                 continue
             except Exception as exc:  # noqa: BLE001 - report per file, keep going
                 report.warnings.append(f"{name}: {parser_cls.name} parser failed: {type(exc).__name__}: {exc}")
                 continue
+            report.warnings.extend(f"{name}: {w}" for w in parser.warnings)
             for i, conv in enumerate(convs):
                 conv.id = conv_id(dataset, name, i)
                 conv.host, conv.user, conv.harness = host, user, parser_cls.name
+                if user == "unknown-user":  # e.g. a zip of ~/.claude itself: take the user from the project path
+                    m = _HOME.match(str(conv.meta.get("cwd") or ""))
+                    if m:
+                        conv.user = m.group(1)
                 conv.session, conv.source_path, conv.index_in_session = session, name, i
                 conv.meta.setdefault("dataset", dataset)
                 if not conv.messages:
