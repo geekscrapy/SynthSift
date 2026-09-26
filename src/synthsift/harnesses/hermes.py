@@ -1,7 +1,14 @@
-"""Hermes agent (Nous Research) transcripts.
+r"""Hermes agent (Nous Research) transcripts.
 
 Status: placeholder shell – registered so the UI can list it, but ``parse`` is
 not written yet.
+
+Where to find them: ``$HERMES_HOME/state.db`` – by default ``~/.hermes/state.db``
+(``%LOCALAPPDATA%\hermes\state.db`` on native Windows), one database per profile
+under ``~/.hermes/profiles/<name>/``.  It is SQLite in WAL mode (copy the
+``-wal`` file too) with ``sessions`` (source-tagged: cli, telegram, …) and
+``messages`` tables; ``sessions/<id>.jsonl`` holds messages appended while the
+database was being replaced.
 
 Hermes-style models emit tool calls inline as ``<tool_call>{json}</tool_call>``
 and results as ``<tool_response>…</tool_response>``, with reasoning in

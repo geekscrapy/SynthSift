@@ -21,6 +21,17 @@ node, and **Timeline**, everything tagged plus the findings, row by row.
 
 ![Overview](docs/overview.jpg)
 
+<table>
+<tr>
+<td width="50%"><b>Tag and comment on anything</b>: right-click a turn, node, term or session<br><img src="docs/tagging.jpg" alt="Right-click tag menu with a comment"></td>
+<td width="50%"><b>Review it on the timeline</b>: tagged rows and findings, day by day<br><img src="docs/timeline.jpg" alt="Timeline of tagged rows and findings"></td>
+</tr>
+<tr>
+<td><b>Filter the graph by tag</b>: everything else fades<br><img src="docs/tag-filter.jpg" alt="Graph filtered to bad, suspicious and escalated items"></td>
+<td><b>Every node in a table</b>: sort, filter and bulk-tag<br><img src="docs/nodes.jpg" alt="Nodes table with bulk tagging"></td>
+</tr>
+</table>
+
 ## Quick start
 
 ```bash
@@ -51,36 +62,202 @@ upload.zip
 Extra wrapper folders above `host/` are ignored, and sub-folders below the
 harness folder become part of the session name. When the harness folder isn't
 recognised, each implemented parser gets to *sniff* the file instead. One file
-is one session and may hold several conversations.
+is one session and may hold several conversations. See
+[Where to get transcripts](#where-to-get-transcripts) for each agent's files.
 
-Agent state folders can be zipped as they are: `.claude/` and `.openclaw/`
-are recognised even though they are hidden. If there is no `host/user` above
-them, the user is taken from the session's working directory.
+## Where to get transcripts
 
-### Importing Claude Code and OpenClaw
+Each parser below says where its agent keeps session files, what to copy and
+which folder to put them in inside the upload zip (`<host>/<user>/<folder>/…`).
 
-`synthsift collect` finds both agents' transcripts on a machine and writes an
-upload-ready zip (`<host>/<user>/<harness>/…`). It never modifies anything:
+| Agent | Zip folder | Parser | Default location |
+|---|---|---|---|
+| [Claude Code](#claude-code) | `claude_code` | ready | `~/.claude/projects/` |
+| [OpenClaw](#openclaw) | `openclaw` | ready | `~/.openclaw/agents/` |
+| [Generic chat logs](#generic-chat-logs-example) | `example` | ready | your own API / proxy logs |
+| [Gemini CLI](#gemini-cli) | `gemini` | placeholder | `~/.gemini/tmp/<project_hash>/chats/` |
+| [Google Antigravity](#google-antigravity) | `antigravity` | placeholder | not documented (see below) |
+| [Hermes Agent](#hermes-agent) | `hermes` | placeholder | `~/.hermes/state.db` |
+
+Files in a *placeholder* folder are accepted but skipped with a warning until
+that parser is written (see [Adding a harness](#adding-a-harness)).
+
+**`synthsift collect`** gathers Claude Code and OpenClaw data from a machine
+into an upload-ready zip. It never modifies anything:
 
 ```bash
-uv run synthsift collect -o laptop.zip            # your own sessions
-sudo uv run synthsift collect --all-users -o ir.zip   # every home directory
-uv run synthsift collect --since-days 7 --dry-run  # list what would be taken
+uv run synthsift collect -o laptop.zip                 # your own sessions on this machine
+sudo uv run synthsift collect --all-users -o ir.zip    # every home directory (incident response)
+uv run synthsift collect --since-days 7 --dry-run      # list what would be taken
 ```
 
-| | Claude Code | OpenClaw |
-|---|---|---|
-| **Where** | `~/.claude/projects/<project>/<session>.jsonl`, sub-agents in `<session>/subagents/agent-*.jsonl` (`$CLAUDE_CONFIG_DIR`) | `~/.openclaw/agents/<agent>/agent/openclaw-agent.sqlite` (current), `…/sessions/*.jsonl` (older releases), `*.jsonl.deleted.*` / `*.jsonl.reset.*` archives and `sessions/cold/*.jsonl.zst` (`$OPENCLAW_STATE_DIR`; `~/.clawdbot` and `~/.moltbot` are searched too) |
-| **Messages** | Streamed response rows are merged back into one message; tool results are linked to their calls; `<system-reminder>`, meta and compaction-summary rows become *system* messages | User, assistant and tool-result events; compaction, branch-summary and reset markers become *system* messages |
-| **Tool calls** | `Bash`, `Read`, `Write`, `Edit`, `WebFetch`, `Task`, MCP tools … with their full input | `exec`, `read`, `write`, `web_fetch`, `message`, `cron` … with their arguments |
-| **Things people do themselves** | `!` bash-mode commands become `user_shell` tool calls (and are security-scanned); slash commands keep their arguments; prompts queued while the agent was busy are kept | `bashExecution` entries become `user_shell` tool calls; messages another agent session sent in are marked `inter_session` |
-| **Sub-agents** | Each sub-agent is its own conversation, whether it was written to its own file or interleaved in the session file | Separate sessions |
-| **Metadata** | Title (`/rename` > AI title > summary), working directory, git branch, CLI version, models | Channel and chat type, session key, display name / label, models, and whether the session was **deleted** or **reset** (archives are read, including deleted sessions kept inside the database) |
+Copying files by hand works too. You can also zip an agent's hidden state
+folder (`.claude/`, `.openclaw/`) as it is: it is recognised even without the
+`host/user` folders, and the user is then taken from the session's working
+directory.
 
-Live files are fine. Claude Code transcripts copied mid-write lose only the
-cut-off last line. `collect` snapshots OpenClaw's SQLite database with the
-online backup API. A copied database with its `-wal` file next to it in the
-zip is also read, including the not-yet-checkpointed rows.
+### Claude Code
+
+**Where**
+
+| OS | Path |
+|---|---|
+| macOS / Linux | `~/.claude/projects/<project>/` |
+| Windows | `%USERPROFILE%\.claude\projects\<project>\` |
+| Custom | `$CLAUDE_CONFIG_DIR/projects/<project>/` when `CLAUDE_CONFIG_DIR` is set |
+
+`<project>` is the working directory with `/` replaced by `-`, e.g.
+`-home-alice-work-api`.
+
+**What to copy**
+- `<session-id>.jsonl`: one file per session.
+- `<session-id>/subagents/agent-*.jsonl`: sub-agent runs, in newer versions.
+
+Copy the whole `<project>` folder. The `tool-results/` folders hold large tool
+outputs, which the transcript already quotes, and are not needed.
+
+**Retention**
+- Claude Code deletes local transcripts after **30 days** by default
+  (`cleanupPeriodDays` in `settings.json`). Collect them before then, or raise
+  the setting on machines you want to monitor.
+- Sessions started or last continued in Claude Desktop / Cowork are kept
+  longer by default.
+
+**Zip path**: `<host>/<user>/claude_code/<project>/<session-id>.jsonl`
+
+**What is read**
+- Streamed response rows are merged into one message, and tool results are
+  linked to their calls.
+- Each sub-agent becomes its own conversation, whether it has its own file or
+  is interleaved in the session file.
+- `!` bash-mode commands the user ran become `user_shell` tool calls, so they
+  are security-scanned.
+- Slash commands and prompts queued while the agent was busy are kept.
+- `<system-reminder>`, meta and compaction-summary rows become *system*
+  messages.
+- Title, working directory, git branch, CLI version and models become
+  metadata.
+- A file copied while Claude Code was writing it loses only its cut-off last
+  line.
+
+### OpenClaw
+
+**Where** (the state directory)
+
+| OS | Path |
+|---|---|
+| macOS / Linux | `~/.openclaw/`, or `~/.clawdbot/` / `~/.moltbot/` on installs from before the renames |
+| Windows, native gateway | `%USERPROFILE%\.openclaw\` |
+| Windows, WSL2 gateway | inside the WSL distro (`\\wsl$\<distro>\home\<user>\.openclaw\`); easiest to run `synthsift collect` inside WSL |
+| Custom | `$OPENCLAW_STATE_DIR` when set |
+
+**What to copy**, per agent (`agents/<agentId>/`)
+
+| File | What it holds |
+|---|---|
+| `agent/openclaw-agent.sqlite` (+ `-wal`) | Current releases: every session, plus archived copies of deleted and reset sessions |
+| `sessions/<session-id>.jsonl` | Older, file-backed releases |
+| `sessions/*.jsonl.deleted.<time>[.zst]`, `*.jsonl.reset.<time>[.zst]` | Transcripts of deleted and reset sessions |
+| `sessions/cold/*.jsonl.zst` | Cold storage, if `session.maintenance.coldStorage` is on |
+
+`sessions/sessions.json` is only an index; it may be included but isn't
+needed.
+
+**Copying a running gateway's database**
+- Use `synthsift collect`, which takes a consistent snapshot with SQLite's
+  backup API.
+- Or stop the gateway first.
+- Or copy the `-wal` file next to the database, so recent writes aren't lost.
+
+**Not on disk**: incognito threads (Control UI → New thread → Incognito) are
+never written to disk and can't be recovered.
+
+**Zip path**: `<host>/<user>/openclaw/agents/<agentId>/agent/openclaw-agent.sqlite` (and
+`…/sessions/…`)
+
+**What is read**
+- User, assistant (text, thinking, tool calls) and tool-result events.
+- `bashExecution` entries become `user_shell` tool calls.
+- Messages another agent session sent in are marked `inter_session`.
+- Compaction, branch-summary and reset markers become *system* messages.
+- Metadata: channel and chat type, session key, display name / label, models,
+  and whether a session was **deleted** or **reset**.
+
+### Generic chat logs (`example`)
+
+This is not an agent. It is SynthSift's own reference format (see
+[The example format](#the-example-format)) and a catch-all for chat logs you
+produce yourself. It reads:
+- a JSON file with a `messages` array, or a bare array of messages;
+- JSONL with one message per line;
+- messages in OpenAI chat-completions style (`tool_calls`,
+  `reasoning_content`) or Anthropic Messages style (`tool_use` /
+  `tool_result` blocks).
+
+**Where**: from your own application's request logging or an LLM proxy, i.e.
+the `messages` you send to the API plus the responses.
+
+**Not supported**: account data exports (ChatGPT `conversations.json`,
+Claude.ai exports) use different layouts and are not read.
+
+**Zip folder**: `example`. The aliases `openai`, `chat` and `generic` work
+too.
+
+### Gemini CLI
+
+*Parser not written yet.*
+
+**Where**
+
+| OS | Path |
+|---|---|
+| macOS / Linux | `~/.gemini/tmp/<project_hash>/chats/session-<time>-<id>.jsonl` (`.json` in older releases) |
+| Windows | `C:\Users\<you>\.gemini\tmp\<project_hash>\chats\` |
+| Custom | `$GEMINI_CLI_HOME/.gemini/…` when `GEMINI_CLI_HOME` is set |
+
+Manually saved chats (`/resume save <tag>`) are kept in
+`~/.gemini/tmp/<project_hash>/`.
+
+**Retention**: sessions are deleted after **30 days** by default
+(`general.sessionRetention.maxAge` in `settings.json`).
+
+**Zip path**: `<host>/<user>/gemini/<project_hash>/…`
+
+### Google Antigravity
+
+*Parser not written yet.*
+
+**Where**: Google does not document where the Antigravity IDE keeps its
+conversations, so there is no confirmed path to collect yet. What is
+documented:
+- The Antigravity CLI keeps its configuration in `~/.gemini/antigravity-cli/`.
+- For scripted runs, headless mode prints the whole run as NDJSON (`init`,
+  `step_update` and `result` events), which is the most reliable capture today:
+
+```bash
+agy -p "…" --output-format stream-json > <host>/<user>/antigravity/run-001.jsonl
+```
+
+**Zip folder**: `antigravity`
+
+### Hermes Agent
+
+*Parser not written yet.*
+
+**Where**
+
+| OS | Path |
+|---|---|
+| macOS / Linux / WSL2 | `~/.hermes/state.db` (plus `state.db-wal`) |
+| Windows (native) | `%LOCALAPPDATA%\hermes\state.db` |
+| Profiles | `~/.hermes/profiles/<name>/state.db` |
+| Custom | `$HERMES_HOME/state.db` when `HERMES_HOME` is set |
+
+`state.db` is a SQLite database that holds every session with its source
+(CLI, Telegram, Discord…). When the database had to be replaced, pending
+messages are also appended to `sessions/<session-id>.jsonl`.
+
+**Zip path**: `<host>/<user>/hermes/state.db`
 
 ## Using the UI
 
@@ -99,7 +276,7 @@ the others, including in other tabs.
 | **Conversation chips** | Under the conversation picker: host, user, agent, model, file, plus the channel, session key, working directory, git branch, sub-agent and deleted/reset state when the agent recorded them. |
 | **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. |
 | **Security tab** | Findings grouped by severity and category, each with its `source → action → sink` chain and where it happened. Click one to jump to the turn. **Flagged** (graph toolbar) fades everything without a finding; flagged nodes carry a severity ring and dataflow edges are drawn bold. |
-| **Tagging** | Right-click a node, a transcript turn, an underlined term, a finding or a conversation in the tree to tag it **bad / suspicious / seen / ignore** or a custom tag, and to add a comment. The selection card has one-click tag checkboxes too. Tag chips in the left panel fade untagged nodes; *Hide ignored* removes `ignore`d items from the graph. |
+| **Tagging** | See [Tagging and comments](#tagging-and-comments) below. |
 | **Docking** | The panel docks right, left or bottom, or opens in its own window (the two windows stay in sync). |
 | **Clustering** | *Cluster* in the graph toolbar collapses the graph into one node per **conversation, host, user or agent**; *auto* picks the first level with 2–40 groups once more than ~400 nodes are visible. Terms seen in more than one group stay outside the clusters, so you see what links sessions, hosts or users. **Click a cluster** to filter the workspace to it and expand it (in *auto* the next level then clusters, giving a drill-down); double-click expands it in place. Clusters show member count, highest finding severity and member tags. |
 | **Layers chips** | Show or hide the *Thoughts*, *Dialogue*, *Actions* and *Entities* layers. |
@@ -112,8 +289,35 @@ the others, including in other tabs.
 ![Selecting a node](docs/selection.jpg)
 ![Layers layout](docs/layers.jpg)
 ![Security findings with a dataflow chain](docs/security.jpg)
-![Right-click tagging](docs/tagging.jpg)
 ![Clustered by conversation, with shared terms between clusters](docs/clusters.jpg)
+
+### Tagging and comments
+
+Sessions, turns (messages, thoughts, tool calls and results) and terms
+(extracted entities) can each carry tags and an analyst comment.
+
+- **Tags**: **bad**, **suspicious**, **seen** and **ignore** are built in; add
+  your own with **+** in the Tags panel (e.g. `escalated`).
+- **Right-click** tags anything: a graph node, a transcript turn, an
+  underlined term, a finding, a conversation in the tree, or a row on the Nodes
+  or Timeline page. The menu has tag checkboxes and a comment box.
+- **The selection card** (and each page's detail pane) has one-click tag
+  checkboxes and a comment field that saves when you leave it.
+- **What you see**:
+  - Tagged nodes carry coloured dots in the graph.
+  - Tagged turns show their tags and comment in the transcript.
+  - A turn inherits its session's tags, drawn outlined on the Nodes page.
+- **Filter by tag**: click tag chips in the Tags panel. The graph fades
+  everything else, and the Nodes and Timeline pages show only matching rows.
+  *Hide ignored* removes `ignore`d items everywhere.
+- **Bulk tagging**: tick rows on the Nodes or Timeline page and use the tag bar,
+  or right-click the selection.
+- **Storage**: tags and comments are saved in `annotations.json` in the data
+  directory, shared by every open page and tab, and exported with each page's
+  CSV.
+
+![Right-click tag menu on a Claude Code turn, with a comment](docs/tagging.jpg)
+![Graph filtered to items tagged bad, suspicious or escalated; the selected tool call shows its tags and comment](docs/tag-filter.jpg)
 
 ### Nodes (`/nodes`)
 
@@ -160,7 +364,13 @@ row by row and grouped by day.
   and comment, and the turn in context, with adjustable **# before / # after**.
 - **CSV export**, including the chain for each finding.
 
-![Timeline of tagged rows and findings](docs/timeline.jpg)
+![Timeline of tagged rows and findings, with a finding's chain and context](docs/timeline.jpg)
+
+Filtered to the analyst's decisions: turns and sessions tagged *bad* or
+*escalated*, across a Claude Code dev box, an OpenClaw home server and a CI
+runner, newest first:
+
+![Timeline filtered by tag](docs/timeline-tags.jpg)
 
 ## Security analysis
 

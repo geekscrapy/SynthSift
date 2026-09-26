@@ -1,11 +1,17 @@
-"""Gemini CLI session transcripts.
+r"""Gemini CLI session transcripts.
 
 Status: placeholder shell – registered so the UI can list it, but ``parse`` is
 not written yet.
 
-Where to look: Gemini CLI keeps per-project state under ``~/.gemini/tmp/<hash>/``
-(saved chats / checkpoints).  Confirm the exact file layout against a real
-export before implementing – it has changed between releases.
+Where to find them (documented by Gemini CLI)::
+
+    ~/.gemini/tmp/<project_hash>/chats/session-<time>-<id>.jsonl   (.json in older releases)
+    ~/.gemini/tmp/<project_hash>/                                  manual `/resume save <tag>` checkpoints
+
+``$GEMINI_CLI_HOME`` moves the ``.gemini`` folder; on Windows it is
+``C:\Users\<you>\.gemini``.  Sessions are deleted after 30 days by default
+(``general.sessionRetention``).  The recorded session keeps prompts, responses,
+tool calls with inputs and outputs, token usage and thoughts.
 
 Expected mapping: user turns -> ``user``; model turns -> ``assistant`` with
 ``thoughts`` -> ``thinking`` blocks and ``functionCall`` / ``toolCalls`` ->
