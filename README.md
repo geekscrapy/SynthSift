@@ -295,6 +295,7 @@ the others, including in other tabs.
 | **Security tab** | Findings grouped by severity and category, each with its `source → action → sink` chain and where it happened. Click one to jump to the turn. **Flagged** (graph toolbar) fades everything without a finding; flagged nodes carry a severity ring and dataflow edges are drawn bold. |
 | **Tagging** | See [Tagging and comments](#tagging-and-comments) below. |
 | **Docking** | The panel docks right, left or bottom, or opens in its own window (the two windows stay in sync). |
+| **Clustering** | *Cluster* in the graph toolbar collapses the graph into one node per **conversation, host, user or agent**; *auto* picks the first level with 2–40 groups once more than ~400 nodes are visible. Terms seen in more than one group stay outside the clusters, so you see what links sessions, hosts or users. **Click a cluster** to filter the workspace to it and expand it (in *auto* the next level then clusters, giving a drill-down); double-click expands it in place. Clusters show member count, highest finding severity and member tags. |
 | **Layers chips** | Show or hide the *Thoughts*, *Dialogue*, *Actions* and *Entities* layers. |
 | **Force / Layers** | *Force*: free physics. *Layers*: a swim-lane timeline with thoughts above the dialogue, tool calls and arguments below it, and entities at the bottom. Thoughts sit on their own band because they weren't acted on. |
 | **Node types** | Legend and filter: click to toggle a type, shift-click to show only that type. |
@@ -305,6 +306,7 @@ the others, including in other tabs.
 ![Selecting a node](docs/selection.jpg)
 ![Layers layout](docs/layers.jpg)
 ![Security findings with a dataflow chain](docs/security.jpg)
+![Clustered by conversation, with shared terms between clusters](docs/clusters.jpg)
 
 ### Tagging and comments
 
