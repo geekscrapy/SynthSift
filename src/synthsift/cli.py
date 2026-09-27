@@ -64,40 +64,7 @@ def _harnesses(_: argparse.Namespace) -> None:
         print(f"{p.name:<14} {state:<6} aliases: {', '.join(p.aliases) or '-'}")
 
 
-def _collect(args: argparse.Namespace) -> None:
-    from .collect import default_host, discover, write_zip
-
-    harnesses = tuple(h for h, off in (("claude_code", args.no_claude_code), ("openclaw", args.no_openclaw)) if not off)
-    found = discover(all_users=args.all_users, since_days=args.since_days,
-                     claude_dir=Path(args.claude_dir).expanduser() if args.claude_dir else None,
-                     openclaw_dir=Path(args.openclaw_dir).expanduser() if args.openclaw_dir else None,
-                     harnesses=harnesses)
-    host = args.host or default_host()
-    if args.dry_run or not found:
-        for f in found:
-            print(f"{host}/{f.user}/{f.harness}/{f.arcpath}  ({f.kind})")
-        if not found:
-            print("no Claude Code or OpenClaw transcripts found", file=sys.stderr)
-            if not args.all_users:
-                print("hint: --all-users searches every home directory (needs permission to read them)", file=sys.stderr)
-        return
-    out = Path(args.output)
-    rep = write_zip(found, out, host)
-    counts: dict[str, int] = {}
-    for f in rep.files:
-        counts[f"{f.harness}:{f.kind}"] = counts.get(f"{f.harness}:{f.kind}", 0) + 1
-    names = {"claude_code:session": "Claude Code session", "claude_code:subagent": "Claude Code sub-agent",
-             "openclaw:database": "OpenClaw database", "openclaw:legacy": "OpenClaw transcript",
-             "openclaw:archive": "OpenClaw archive"}
-    parts = [f"{n} {names.get(k, k)}{'s' if n != 1 else ''}" for k, n in sorted(counts.items())]
-    users = sorted({f.user for f in rep.files})
-    print(f"wrote {out} ({rep.bytes / 1e6:.1f} MB): {', '.join(parts)} for {', '.join(users)} on {host}", file=sys.stderr)
-    for s in rep.skipped:
-        print(f"skipped {s}", file=sys.stderr)
-    print(f"next: synthsift serve --load {out}", file=sys.stderr)
-
-
-COMMANDS = ("serve", "build", "harnesses", "collect")
+COMMANDS = ("serve", "build", "harnesses")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -129,19 +96,6 @@ def main(argv: list[str] | None = None) -> None:
 
     h = sub.add_parser("harnesses", parents=[common], help="list registered transcript parsers")
     h.set_defaults(func=_harnesses)
-
-    c = sub.add_parser("collect", parents=[common],
-                       help="zip this machine's Claude Code / OpenClaw transcripts for upload")
-    c.add_argument("-o", "--output", default="synthsift-collect.zip")
-    c.add_argument("--host", help="host name to file the transcripts under (default: this machine's)")
-    c.add_argument("--all-users", action="store_true", help="search every home directory, not just yours")
-    c.add_argument("--since-days", type=float, help="only files changed in the last N days")
-    c.add_argument("--claude-dir", help="Claude Code config dir (default: $CLAUDE_CONFIG_DIR or ~/.claude)")
-    c.add_argument("--openclaw-dir", help="OpenClaw state dir (default: $OPENCLAW_STATE_DIR or ~/.openclaw)")
-    c.add_argument("--no-claude-code", action="store_true", help="skip Claude Code")
-    c.add_argument("--no-openclaw", action="store_true", help="skip OpenClaw")
-    c.add_argument("--dry-run", action="store_true", help="list what would be collected")
-    c.set_defaults(func=_collect)
 
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)

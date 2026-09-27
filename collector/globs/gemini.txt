@@ -1,0 +1,16 @@
+# Gemini CLI (Google) – session transcripts
+# Syntax: see claude_code.txt.
+# SynthSift's gemini parser is a placeholder: collected files are kept but
+# skipped (with a warning) until it is written.
+# Sessions are deleted after 30 days by default (general.sessionRetention.maxAge).
+
+# $GEMINI_CLI_HOME replaces the home directory when set
+${GEMINI_CLI_HOME}/.gemini/./tmp/*/chats/session-*.json*
+${GEMINI_CLI_HOME}/.gemini/./tmp/*/checkpoint-*.json
+
+# Automatic session recording (macOS / Linux; Windows: C:\Users\<you>\.gemini)
+#   tmp/<project_hash>/chats/session-<time>-<id>.jsonl   (.json in older releases)
+~/.gemini/./tmp/*/chats/session-*.json*
+
+# Chats saved by hand with /resume save <tag>
+~/.gemini/./tmp/*/checkpoint-*.json

@@ -38,7 +38,7 @@ node, and **Timeline**, everything tagged plus the findings, row by row.
 uv run synthsift --open                     # web UI on http://127.0.0.1:8765
 uv run synthsift serve --load samples/synthsift-samples.zip --open
 uv run synthsift build my-transcripts.zip -o graph.html   # standalone pyvis HTML, no server
-uv run synthsift collect -o mine.zip        # zip this machine's Claude Code + OpenClaw sessions
+python3 collector/synthsift_collect.py      # zip this machine's agent sessions (standalone, see collector/)
 uv run synthsift harnesses                  # list transcript parsers
 ```
 
@@ -82,14 +82,21 @@ which folder to put them in inside the upload zip (`<host>/<user>/<folder>/…`)
 Files in a *placeholder* folder are accepted but skipped with a warning until
 that parser is written (see [Adding a harness](#adding-a-harness)).
 
-**`synthsift collect`** gathers Claude Code and OpenClaw data from a machine
-into an upload-ready zip. It never modifies anything:
+**The collector** ([`collector/`](collector/)) gathers every agent's files
+from a machine into an upload-ready zip, together with a manifest of original
+paths and SHA-256 hashes. It is a standalone, standard-library-only Python
+script, so the folder can be copied to any machine without installing
+SynthSift. It never modifies anything:
 
 ```bash
-uv run synthsift collect -o laptop.zip                 # your own sessions on this machine
-sudo uv run synthsift collect --all-users -o ir.zip    # every home directory (incident response)
-uv run synthsift collect --since-days 7 --dry-run      # list what would be taken
+python3 collector/synthsift_collect.py -o laptop.zip             # your own sessions on this machine
+sudo python3 collector/synthsift_collect.py --all-users -o ir.zip # every home directory (incident response)
+python3 collector/synthsift_collect.py --since-days 7 --dry-run   # list what would be taken
 ```
+
+What it looks for is listed per agent in plain text glob files,
+[`collector/globs/<agent>.txt`](collector/globs/); edit them or add one to
+cover another agent. See [collector/README.md](collector/README.md).
 
 Copying files by hand works too. You can also zip an agent's hidden state
 folder (`.claude/`, `.openclaw/`) as it is: it is recognised even without the
@@ -123,7 +130,9 @@ outputs, which the transcript already quotes, and are not needed.
 - Sessions started or last continued in Claude Desktop / Cowork are kept
   longer by default.
 
-**Zip path**: `<host>/<user>/claude_code/<project>/<session-id>.jsonl`
+**Zip path**: `<host>/<user>/claude_code/projects/<project>/<session-id>.jsonl`
+
+**Glob list**: [`collector/globs/claude_code.txt`](collector/globs/claude_code.txt)
 
 **What is read**
 - Streamed response rows are merged into one message, and tool results are
@@ -148,7 +157,7 @@ outputs, which the transcript already quotes, and are not needed.
 |---|---|
 | macOS / Linux | `~/.openclaw/`, or `~/.clawdbot/` / `~/.moltbot/` on installs from before the renames |
 | Windows, native gateway | `%USERPROFILE%\.openclaw\` |
-| Windows, WSL2 gateway | inside the WSL distro (`\\wsl$\<distro>\home\<user>\.openclaw\`); easiest to run `synthsift collect` inside WSL |
+| Windows, WSL2 gateway | inside the WSL distro (`\\wsl$\<distro>\home\<user>\.openclaw\`); easiest to run the collector inside WSL |
 | Custom | `$OPENCLAW_STATE_DIR` when set |
 
 **What to copy**, per agent (`agents/<agentId>/`)
@@ -164,8 +173,8 @@ outputs, which the transcript already quotes, and are not needed.
 needed.
 
 **Copying a running gateway's database**
-- Use `synthsift collect`, which takes a consistent snapshot with SQLite's
-  backup API.
+- Use the collector, which takes a consistent snapshot with SQLite's backup
+  API.
 - Or stop the gateway first.
 - Or copy the `-wal` file next to the database, so recent writes aren't lost.
 
@@ -173,6 +182,8 @@ needed.
 never written to disk and can't be recovered.
 
 **Zip path**: `<host>/<user>/openclaw/agents/<agentId>/agent/openclaw-agent.sqlite` (and
+
+**Glob list**: [`collector/globs/openclaw.txt`](collector/globs/openclaw.txt)
 `…/sessions/…`)
 
 **What is read**
@@ -221,7 +232,9 @@ Manually saved chats (`/resume save <tag>`) are kept in
 **Retention**: sessions are deleted after **30 days** by default
 (`general.sessionRetention.maxAge` in `settings.json`).
 
-**Zip path**: `<host>/<user>/gemini/<project_hash>/…`
+**Zip path**: `<host>/<user>/gemini/tmp/<project_hash>/chats/…`
+
+**Glob list**: [`collector/globs/gemini.txt`](collector/globs/gemini.txt)
 
 ### Google Antigravity
 
@@ -239,6 +252,8 @@ agy -p "…" --output-format stream-json > <host>/<user>/antigravity/run-001.jso
 ```
 
 **Zip folder**: `antigravity`
+
+**Glob list**: [`collector/globs/antigravity.txt`](collector/globs/antigravity.txt)
 
 ### Hermes Agent
 
@@ -258,6 +273,8 @@ agy -p "…" --output-format stream-json > <host>/<user>/antigravity/run-001.jso
 messages are also appended to `sessions/<session-id>.jsonl`.
 
 **Zip path**: `<host>/<user>/hermes/state.db`
+
+**Glob list**: [`collector/globs/hermes.txt`](collector/globs/hermes.txt)
 
 ## Using the UI
 

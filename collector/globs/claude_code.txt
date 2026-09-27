@@ -1,0 +1,20 @@
+# Claude Code (Anthropic) – session transcripts
+#
+# Format (same for every file in this folder):
+#   one glob per line; blank lines and "#" comments are ignored
+#   ~        the home directory of the user being collected
+#   ${VAR}   an environment variable (current user only; the line is skipped when unset)
+#   **       any number of directories
+#   /./      everything after it is kept in the zip, under <host>/<user>/<agent>/
+#            (without it, everything after the last fixed directory is kept)
+#   !name    exclude files whose name matches (e.g. !*.lock)
+#
+# Transcripts are deleted after 30 days by default (cleanupPeriodDays in settings.json).
+
+# $CLAUDE_CONFIG_DIR replaces ~/.claude when set
+${CLAUDE_CONFIG_DIR}/./projects/**/*.jsonl
+
+# macOS / Linux, and Windows (%USERPROFILE%\.claude): sessions and sub-agents
+#   projects/<project>/<session-id>.jsonl
+#   projects/<project>/<session-id>/subagents/agent-*.jsonl
+~/.claude/./projects/**/*.jsonl
