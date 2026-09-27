@@ -37,7 +37,7 @@
   };
   const SECTION_ORDER = ["Modules", "Text sources", "Processing"];
 
-  const state = { schema: [], values: {}, dirty: {}, models: [], harnesses: [], modules: [], stats: new Map(), paragraphs: 0 };
+  const state = { schema: [], values: {}, dirty: {}, models: [], harnesses: [], modules: [], stats: new Map() };
   const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
   async function load() {
@@ -54,12 +54,12 @@
   }
 
   const current = (key) => (key in state.dirty ? state.dirty[key] : state.values[key]);
+  const moduleDirty = (name) => Object.keys(state.dirty).some((k) => (state.schema.find((x) => x.key === k) || {}).module === name);
 
   async function loadStats() {
     try {
       const m = await api("/api/modules");
       state.stats = new Map(m.modules.map((x) => [x.name, x]));
-      state.paragraphs = m.paragraphs;
     } catch (e) { /* server busy – cards render without stats */ }
   }
 
@@ -67,8 +67,7 @@
     if (JSON.stringify(v) === JSON.stringify(state.values[f.key])) delete state.dirty[f.key];
     else state.dirty[f.key] = v;
     document.querySelector(`[data-row="${CSS.escape(f.key)}"]`)?.classList.toggle("dirty", f.key in state.dirty);
-    if (f.module) document.querySelector(`[data-module="${CSS.escape(f.module)}"]`)?.classList.toggle("dirty",
-      Object.keys(state.dirty).some((k) => (state.schema.find((x) => x.key === k) || {}).module === f.module));
+    if (f.module) document.querySelector(`[data-module="${CSS.escape(f.module)}"]`)?.classList.toggle("dirty", moduleDirty(f.module));
     updateSavebar();
   }
 
@@ -90,10 +89,11 @@
       }
       case "int":
       case "float": {
-        const num = el("input", { class: "text-input num", type: "number", value: v, min: f.min ?? undefined, max: f.max ?? undefined, step: f.step ?? (f.type === "int" ? 1 : 0.01) });
+        const step = f.step ?? (f.type === "int" ? 1 : 0.01);
+        const num = el("input", { class: "text-input num", type: "number", value: v, min: f.min ?? undefined, max: f.max ?? undefined, step });
         const wrap = el("div", { class: "ctl" });
         if (f.min !== null && f.max !== null && f.max - f.min <= 5000) {
-          const range = el("input", { type: "range", min: f.min, max: f.max, step: f.step ?? (f.type === "int" ? 1 : 0.01), value: v });
+          const range = el("input", { type: "range", min: f.min, max: f.max, step, value: v });
           range.addEventListener("input", () => { num.value = range.value; setValue(f, f.type === "int" ? parseInt(range.value, 10) : parseFloat(range.value)); });
           num.addEventListener("input", () => { range.value = num.value; });
           wrap.append(range);
@@ -133,16 +133,12 @@
         ta.addEventListener("input", () => setValue(f, ta.value));
         return ta;
       }
-      case "color": {
-        const c = el("input", { type: "color", value: v, oninput: (e) => setValue(f, e.target.value) });
-        return c;
-      }
+      case "color":
+        return el("input", { type: "color", value: v, oninput: (e) => setValue(f, e.target.value) });
       case "lists":
         return listsControl();
-      default: {
-        const t = el("input", { class: "text-input", value: v, oninput: (e) => setValue(f, e.target.value) });
-        return t;
-      }
+      default:
+        return el("input", { class: "text-input", value: v, oninput: (e) => setValue(f, e.target.value) });
     }
   }
 
@@ -229,7 +225,7 @@
     const opts = state.schema.filter((f) => f.section === "Modules" && f.module === m.name && f.key !== m.switch && f.type !== "hidden");
     const helpers = state.modules.filter((x) => x.helper_of === m.name);
     const stats = [m, ...helpers].map((x) => state.stats.get(x.name)).filter(Boolean);
-    const dirty = Object.keys(state.dirty).some((k) => (state.schema.find((x) => x.key === k) || {}).module === m.name);
+    const dirty = moduleDirty(m.name);
     const openKey = `modOpen.${m.name}`;
     const open = store.get(openKey, on && opts.length > 0 && opts.length <= 6) || dirty;
 

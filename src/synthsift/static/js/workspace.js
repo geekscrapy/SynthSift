@@ -1,26 +1,15 @@
 /* Shared workspace model for the full-page views (Nodes, Timeline).
  *
  * Loads the analysed graph, settings and analyst annotations, and exposes the
- * same filter / tag / comment semantics as the graph page. Filters and tags use
- * the same localStorage keys and BroadcastChannel messages as the graph page, so
- * every open page stays in sync.
+ * same filter / tag / comment semantics as the graph page (the lookups and tag
+ * helpers are SS.model, shared with it). Filters and tags use the same
+ * localStorage keys and BroadcastChannel messages as the graph page, so every
+ * open page stays in sync.
  */
 "use strict";
 
 const WS = (() => {
-  const { store, api, esc, el, icon, snack, fmt } = SS;
-
-  const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
-  const SEV_COLOR = { critical: "#A50E0E", high: "#D93025", medium: "#E37400", low: "#B08800", info: "#5F6368" };
-  const sevRank = (s) => SEV_ORDER.indexOf(s);
-  const STRUCTURAL = new Set(["conversation", "user", "assistant", "system", "thought", "tool_call", "tool_arg", "tool_result", "tool_hub"]);
-  const LAYERS = [
-    { key: "thought", label: "Thoughts", icon: "psychology" },
-    { key: "dialogue", label: "Dialogue", icon: "forum" },
-    { key: "action", label: "Actions", icon: "build" },
-    { key: "entity", label: "Entities", icon: "hub" },
-  ];
-  const EXTRA_COLORS = ["#7B1FA2", "#00897B", "#C0CA33", "#6D4C41", "#3949AB", "#D81B60", "#00ACC1", "#F4511E"];
+  const { store, api, esc, el, icon, snack, fmt, plural, fmtTime, closeMenus, placeMenu } = SS;
 
   const W = {
     data: null,
@@ -42,6 +31,8 @@ const WS = (() => {
     hideIgnored: store.get("hideIgnored", true),
     listeners: new Set(),
   };
+  const M = SS.model(W, { onSaved: () => { broadcast({ type: "annotations" }); emit("annotations"); }, promptTag: newTag });
+  const { kindOf, convVisible, targetOf, annOf, tagsFor, labelFor, seenRange, loadAnnotations, toggleTag, tagChipsHTML, chainEl } = M;
 
   /* ------------------------------------------------------------- loading */
   async function load() {
@@ -56,9 +47,9 @@ const WS = (() => {
   function ingest(g) {
     W.data = g.empty ? null : g;
     W.kinds.clear(); W.convs.clear(); W.events.clear(); W.paras.clear(); W.nodes.clear();
-    W.findings = []; W.findingsByEvent.clear(); W.convOrder = [];
+    W.findings = []; W.findingsByEvent.clear(); W.findingsByNode.clear(); W.convOrder = [];
     if (!W.data) return;
-    for (const k of [...g.kinds.node_types, ...g.kinds.categories]) W.kinds.set(k.key, { ...k, color: W.settings["color." + k.key] || k.color });
+    SS.loadKinds(W.kinds, g, W.settings);
     W.convOrder = g.conversations.map((c) => c.id);
     for (const c of g.conversations) W.convs.set(c.id, c);
     for (const e of g.events) W.events.set(e.id, e);
@@ -66,7 +57,6 @@ const WS = (() => {
     for (const n of g.nodes) W.nodes.set(n.id, n);
     W.findings = (g.findings || []).map((f, i) => ({ ...f, i }));
     // findings per event and per entity node (resolved the way the graph builder does)
-    W.findingsByNode = new Map();
     const add = (m, k, f) => { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(f)) m.get(k).push(f); };
     for (const f of W.findings) {
       add(W.findingsByEvent, f.event, f);
@@ -85,38 +75,7 @@ const WS = (() => {
     }
   }
 
-  async function loadAnnotations() {
-    try {
-      const r = await api("/api/annotations");
-      W.annotations = r.annotations || {};
-      W.tags = r.tags || [];
-    } catch (e) { /* keep previous */ }
-  }
-
-  /* -------------------------------------------------------------- kinds */
-  const kindKey = (n) => (n.type === "entity" ? n.category : n.type);
-  function kindOf(n) {
-    const key = kindKey(n);
-    let k = W.kinds.get(key);
-    if (!k) {
-      let h = 0;
-      for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-      k = { key, label: key.replace(/_/g, " "), group: "Custom", icon: "label", color: EXTRA_COLORS[h % EXTRA_COLORS.length] };
-      W.kinds.set(key, k);
-    }
-    return k;
-  }
-  const kindGroup = (key) => (STRUCTURAL.has(key) ? "Conversation structure" : (W.kinds.get(key) || {}).group || "Other");
-
   /* ------------------------------------------------------------ filters */
-  function convMatchesFilter(cid) {
-    const c = W.convs.get(cid);
-    if (!c) return false;
-    const f = W.filter;
-    return (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness)
-      && (!f.conv || c.id === f.conv);
-  }
-  const convVisible = (cid) => !W.hiddenConvs.has(cid) && convMatchesFilter(cid);
   const nodeVisible = (n) => !(n.conv && n.conv.length) || n.conv.some(convVisible);
 
   function setFilter(patch, { broadcastIt = true } = {}) {
@@ -155,168 +114,26 @@ const WS = (() => {
   }
 
   /* -------------------------------------------------------- annotations */
-  function targetOf(nodeId) {
-    const n = W.nodes.get(nodeId);
-    if (!n) return null;
-    if (n.type === "conversation") return nodeId;
-    if (n.type === "entity") return "term:" + nodeId;
-    if (n.type === "tool_arg") return "event:" + n.event;
-    if (n.type === "tool_hub") return null;
-    return "event:" + nodeId;
-  }
-  const annOf = (t) => (t && W.annotations[t]) || null;
-  const tagsFor = (t) => (annOf(t) || {}).tags || [];
-  const tagInfo = (name) => W.tags.find((t) => t.name === name) || { name, color: "#5F6368", icon: "sell" };
-  function nodeTags(nodeId) {
-    const own = tagsFor(targetOf(nodeId));
-    const n = W.nodes.get(nodeId);
-    if (n && n.type !== "entity" && n.type !== "conversation" && n.conv && n.conv[0]) {
-      const ct = tagsFor("conv:" + n.conv[0]);
-      if (ct.length) return [...new Set([...own, ...ct])];
-    }
-    return own;
-  }
-
-  function labelFor(target) {
-    if (target.startsWith("conv:")) { const c = W.convs.get(target.slice(5)); return c ? c.title : target; }
-    if (target.startsWith("event:")) {
-      const ev = W.events.get(target.slice(6));
-      if (!ev) return target;
-      const first = ev.p.length ? W.paras.get(ev.p[0]).t.replace(/\s+/g, " ").slice(0, 90) : "";
-      return `${ev.label}${first ? " – " + first : ""}`;
-    }
-    const n = W.nodes.get(target.slice(5));
-    return n ? n.label : target.slice(5).replace(/^ent:/, "");
-  }
-  function convFor(target) {
-    if (target.startsWith("conv:")) return target.slice(5);
-    if (target.startsWith("event:")) { const ev = W.events.get(target.slice(6)); return ev ? ev.c : null; }
-    const n = W.nodes.get(target.slice(5));
-    return n && n.conv && n.conv.length ? n.conv[0] : null;
-  }
-  function tsFor(target) {
-    if (target.startsWith("conv:")) { const c = W.convs.get(target.slice(5)); return c ? c.started_at || null : null; }
-    if (target.startsWith("event:")) { const ev = W.events.get(target.slice(6)); return ev ? ev.ts || null : null; }
-    return seenRange(target.slice(5))[0];
-  }
-  /** earliest / latest timestamp a node appears at */
-  function seenRange(nodeId) {
-    const n = W.nodes.get(nodeId);
-    let lo = null, hi = null;
-    for (const [pid] of (n && n.occ) || []) {
-      const ts = W.events.get(W.paras.get(pid)?.e)?.ts;
-      if (!ts) continue;
-      if (!lo || ts < lo) lo = ts;
-      if (!hi || ts > hi) hi = ts;
-    }
-    return [lo, hi];
-  }
-
-  async function saveAnnotation(target, tags, comment) {
-    const prev = annOf(target);
-    const body = { target, tags, comment: comment ?? (prev ? prev.comment : ""), label: labelFor(target), conv: convFor(target), ts: tsFor(target) };
-    try {
-      const r = await api("/api/annotations", { method: "PUT", body });
-      if (r.annotation) W.annotations[target] = r.annotation; else delete W.annotations[target];
-      W.tags = r.tags || W.tags;
-      broadcast({ type: "annotations" });
-      emit("annotations");
-    } catch (e) {
-      snack("Could not save: " + e.message);
-    }
-  }
-  function toggleTag(target, tag) {
-    const cur = new Set(tagsFor(target));
-    cur.has(tag) ? cur.delete(tag) : cur.add(tag);
-    return saveAnnotation(target, [...cur]);
-  }
   /** add or remove one tag on many targets at once */
   async function bulkTag(targets, tag, on) {
     for (const t of targets) {
       const cur = new Set(tagsFor(t));
       if (on === cur.has(tag)) continue;
       on ? cur.add(tag) : cur.delete(tag);
-      const prev = annOf(t);
-      const body = { target: t, tags: [...cur], comment: prev ? prev.comment : "", label: labelFor(t), conv: convFor(t), ts: tsFor(t) };
-      try {
-        const r = await api("/api/annotations", { method: "PUT", body });
-        if (r.annotation) W.annotations[t] = r.annotation; else delete W.annotations[t];
-        W.tags = r.tags || W.tags;
-      } catch (e) { snack("Could not save: " + e.message); break; }
+      try { await M.putAnnotation(t, [...cur]); } catch (e) { snack("Could not save: " + e.message); break; }
     }
     broadcast({ type: "annotations" });
     emit("annotations");
   }
   async function newTag() {
-    const name = (prompt("New tag name") || "").trim().toLowerCase();
-    if (!name) return null;
-    const color = ["#1A73E8", "#9334E6", "#12B5CB", "#E52592", "#188038", "#B06000"][W.tags.length % 6];
-    try {
-      const r = await api("/api/tags", { method: "POST", body: { name, color } });
-      W.tags = r.tags;
-      broadcast({ type: "annotations" });
-      emit("annotations");
-      return name;
-    } catch (e) { snack(e.message); return null; }
-  }
-
-  const tagChipsHTML = (tags, inherited = null) => tags.map((t) => (inherited && inherited.has(t)
-    ? `<span class="tag-chip inherited" style="--tag:${esc(tagInfo(t).color)}" title="Inherited from the session">${esc(t)}</span>`
-    : `<span class="tag-chip" style="--tag:${esc(tagInfo(t).color)}">${esc(t)}</span>`)).join("");
-
-  /* ----------------------------------------------------------- tag menu */
-  function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
-  function placeMenu(menu, x, y) {
-    document.body.append(menu);
-    const w = menu.offsetWidth, h = menu.offsetHeight;
-    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
-    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
-    setTimeout(() => {
-      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close, true); } };
-      document.addEventListener("mousedown", close, true);
-    }, 0);
-  }
-  const KIND_LABEL = { conv: "Session", event: "Turn", term: "Term" };
-  function openTagMenu(target, x, y) {
-    if (!target) return;
-    closeMenus();
-    const kind = target.split(":", 1)[0];
-    const menu = el("div", { class: "menu tag-menu", role: "menu" });
-    const render = () => {
-      const cur = new Set(tagsFor(target));
-      const a = annOf(target);
-      const items = W.tags.map((t) => el("button", {
-        role: "menuitemcheckbox", "aria-checked": cur.has(t.name) ? "true" : "false",
-        onclick: async () => { await toggleTag(target, t.name); render(); },
-      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
-        el("span", { class: "grow" }, t.name)));
-      const ta = el("textarea", { class: "text-input", placeholder: "Analyst comment…" });
-      ta.value = a ? a.comment : "";
-      menu.replaceChildren(
-        el("div", { class: "tm-head" }, `Tag ${KIND_LABEL[kind] || kind}`, el("b", { title: labelFor(target) }, labelFor(target))),
-        ...items,
-        el("button", { onclick: async () => { const n = await newTag(); if (n) { await toggleTag(target, n); render(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")),
-        el("div", { class: "tm-comment" }, ta, el("div", { class: "tm-actions" },
-          el("button", { class: "btn text sm", onclick: async () => { await saveAnnotation(target, [], ""); menu.remove(); } }, "Clear all"),
-          el("button", { class: "btn filled sm", onclick: async () => { await saveAnnotation(target, [...tagsFor(target)], ta.value); menu.remove(); snack("Comment saved"); } }, "Save comment"))));
-    };
-    render();
-    placeMenu(menu, x, y);
+    const name = await M.newTag();
+    if (name) { broadcast({ type: "annotations" }); emit("annotations"); }
+    return name;
   }
 
   /** tag checkboxes + comment box for a detail pane */
-  function tagEditor(target) {
-    const cur = new Set(tagsFor(target));
-    const chips = el("div", { class: "chip-row sel-tags" }, W.tags.map((t) => el("button", {
-      class: `chip sm${cur.has(t.name) ? " on" : ""}`, style: { "--tag": t.color }, role: "checkbox",
-      "aria-checked": cur.has(t.name) ? "true" : "false", onclick: () => toggleTag(target, t.name),
-    }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), t.name)),
-      el("button", { class: "chip sm", onclick: async () => { const n = await newTag(); if (n) toggleTag(target, n); } }, icon("add"), "New tag"));
-    const ta = el("textarea", { class: "text-input sel-comment", placeholder: "Analyst comment (saved when you leave the box)…" });
-    ta.value = (annOf(target) || {}).comment || "";
-    ta.addEventListener("change", () => saveAnnotation(target, [...tagsFor(target)], ta.value));
-    return el("div", {}, chips, ta);
-  }
+  const tagEditor = (target) => el("div", {}, ...M.tagEditor(target,
+    el("button", { class: "chip sm", onclick: async () => { const n = await newTag(); if (n) toggleTag(target, n); } }, icon("add"), "New tag")));
 
   /** tag filter chips; clicking toggles the shared tag filter */
   function renderTagFilter(container, { counts = null } = {}) {
@@ -351,33 +168,9 @@ const WS = (() => {
   }
   /** security categories as [{ key, label }] */
   const secCategories = () => Object.entries((W.data && W.data.security && W.data.security.categories) || {}).map(([key, label]) => ({ key, label }));
-  const worstSeverity = (fs) => fs.reduce((a, f) => (sevRank(f.severity) > sevRank(a) ? f.severity : a), "");
-  function endpointLabel(key) {
-    const n = W.nodes.get("ent:" + key);
-    if (n) return n.label;
-    const ev = W.events.get(key);
-    return ev ? ev.label : key;
-  }
-  function chainEl(chain) {
-    const box = el("div", { class: "chain" });
-    chain.forEach(([src, action, dst], i) => {
-      if (i === 0) box.append(el("span", { class: "node", title: endpointLabel(src) }, endpointLabel(src)));
-      box.append(el("span", { class: "arrow" }, action, icon("arrow_forward")));
-      box.append(el("span", { class: "node", title: endpointLabel(dst) }, endpointLabel(dst)));
-    });
-    return box;
-  }
+  const findingCard = (f, { withConv = true } = {}) => M.findingCard(f, { style: { cursor: "default" } }, null, withConv ? M.findingWhere(f) : null);
 
   /* ------------------------------------------------------------ text */
-  function fmtTime(ts) {
-    if (!ts) return "";
-    const d = new Date(ts);
-    return isNaN(d) ? String(ts) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  }
-  function fmtDay(ts) {
-    const d = new Date(ts);
-    return isNaN(d) ? "Unknown date" : d.toLocaleDateString([], { weekday: "short", year: "numeric", month: "short", day: "numeric" });
-  }
   /** paragraph text with <mark>s over [start, end] spans */
   function markedHTML(text, spans = []) {
     const sorted = spans.filter((s) => s[1] > s[0]).sort((a, b) => a[0] - b[0]);
@@ -388,11 +181,6 @@ const WS = (() => {
       pos = e;
     }
     return out + esc(text.slice(pos));
-  }
-  const ROLE_ICON = { user: "person", assistant: "smart_toy", system: "settings", thought: "psychology", tool_call: "build", tool_result: "output" };
-  function avatarHTML(type) {
-    const k = W.kinds.get(type) || {};
-    return `<span class="avatar" style="background:${esc(k.color || "#80868b")}"><span class="msi">${ROLE_ICON[type] || "chat"}</span></span>`;
   }
 
   /* ---------------------------------------------------------- navigation */
@@ -453,22 +241,138 @@ const WS = (() => {
     setTimeout(watchVersion, delay);
   }
 
-  /** CSV download */
-  function downloadCSV(name, header, rows) {
-    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const text = [header.map(q).join(","), ...rows.map((r) => r.map(q).join(","))].join("\n");
-    const a = el("a", { href: URL.createObjectURL(new Blob([text], { type: "text/csv" })), download: name });
-    document.body.append(a); a.click(); a.remove();
+  /* --------------------------------------------- table pages: chrome */
+  /** the theme button and the filter-rail toggle (remembered under railKey) */
+  function wireTopbar(railKey) {
+    const btn = document.getElementById("btn-theme");
+    const themeIcon = () => (btn.querySelector(".msi").textContent = SS.effectiveTheme(store.get("theme", "auto")) === "dark" ? "light_mode" : "dark_mode");
+    btn.addEventListener("click", () => { SS.applyTheme(SS.effectiveTheme(store.get("theme", "auto")) === "dark" ? "light" : "dark"); themeIcon(); });
+    themeIcon();
+    const shell = document.getElementById("shell");
+    shell.classList.toggle("rail-closed", store.get(railKey, false));
+    document.getElementById("btn-rail").addEventListener("click", () => store.set(railKey, shell.classList.toggle("rail-closed")));
   }
 
-  function makeRegex(q) {
-    const m = q.match(/^\/(.+)\/([a-z]*)$/);
-    try {
-      if (m) return new RegExp(m[1], m[2].replace("g", ""));
-      return q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
-    } catch (e) {
-      return null;
-    }
+  /** the filter rail's first section: conversation scope (see renderScope) and a "Reset all" button */
+  const scopeSection = (onReset) => el("div", { class: "rail-section" },
+    el("h3", {}, icon("filter_list", "xs"), "Filters", el("button", { id: "reset", onclick: onReset }, "Reset all")),
+    el("div", { id: "scope" }), el("div", { id: "hidden-note" }));
+  /** heading of the rail's tag section */
+  const tagsHeading = () => el("h3", {}, icon("sell", "xs"), "Tags",
+    el("button", { onclick: async () => { const n = await newTag(); if (n) snack(`Tag “${n}” created`); } }, "New tag"));
+
+  /** host / user / agent / conversation selects and a note about conversations hidden in the graph */
+  function renderScope() {
+    renderFilterSelects(document.getElementById("scope"));
+    const hidden = [...W.hiddenConvs].filter((c) => W.convs.has(c));
+    document.getElementById("hidden-note").replaceChildren(...(hidden.length ? [el("div", { class: "field-row cell-muted" }, icon("visibility_off", "xs"),
+      el("span", { class: "grow" }, `${plural(hidden.length, "conversation")} hidden in the graph`),
+      el("button", { class: "btn text sm", onclick: () => { W.hiddenConvs.clear(); store.set("hiddenConvs", []); setFilter({}); } }, "Show"))] : []));
+  }
+  /** the filters shared with the graph page: conversation scope and tag filter */
+  const scopeActive = () => W.tagFilter.size || W.filter.host || W.filter.user || W.filter.harness || W.filter.conv;
+  function resetScope() {
+    W.tagFilter.clear(); store.set("tagFilter", []); broadcast({ type: "tagFilter", tags: [] });
+    setFilter({ host: "", user: "", harness: "", conv: "" }); // re-renders via the "filters" event
+  }
+
+  /** security category chips with counts; `selected` is the page's set of category keys */
+  function renderCatChips(container, counts, selected, onChange) {
+    container.replaceChildren(...secCategories().filter((c) => counts.get(c.key) || selected.has(c.key)).map((c) => el("button", {
+      class: `chip sm${selected.has(c.key) ? " selected" : ""}`, title: `Only ${c.label.toLowerCase()} findings`,
+      onclick: () => { selected.has(c.key) ? selected.delete(c.key) : selected.add(c.key); onChange(); },
+    }, el("span", { class: "label" }, c.label), el("span", { class: "count" }, fmt(counts.get(c.key) || 0)))));
+  }
+
+  /** rows-per-page select, "a–b of n" and page buttons */
+  function pager({ n, page, pageSize, sizes, firstLast = false, onSize, goPage }) {
+    const pages = Math.max(1, Math.ceil(n / pageSize));
+    const lo = n ? page * pageSize + 1 : 0, hi = Math.min(n, (page + 1) * pageSize);
+    const btn = (ic, title, disabled, p) => el("button", { class: "icon-btn sm", title, disabled, onclick: () => goPage(p) }, icon(ic));
+    return el("div", { class: "pager" },
+      el("select", { "aria-label": "Rows per page", onchange: (e) => onSize(Number(e.target.value)) },
+        ...sizes.map((s) => el("option", { value: s, selected: s === pageSize }, `${s} / page`))),
+      el("span", { style: { margin: "0 6px" } }, `${fmt(lo)}–${fmt(hi)} of ${fmt(n)}`),
+      firstLast ? btn("first_page", "First page", page === 0, 0) : null,
+      btn("chevron_left", "Previous page", page === 0, page - 1),
+      btn("chevron_right", "Next page", page >= pages - 1, page + 1),
+      firstLast ? btn("last_page", "Last page", page >= pages - 1, pages - 1) : null);
+  }
+
+  /** show / hide the optional columns; `hidden` is the page's set of hidden column keys */
+  function columnsMenu(anchor, cols, hidden, onChange) {
+    closeMenus();
+    const menu = el("div", { class: "menu", role: "menu" });
+    const draw = () => menu.replaceChildren(...cols.filter((c) => !c.fixed).map((c) => el("button", {
+      role: "menuitemcheckbox", "aria-checked": hidden.has(c.key) ? "false" : "true",
+      onclick: () => { hidden.has(c.key) ? hidden.delete(c.key) : hidden.add(c.key); onChange(); draw(); },
+    }, icon(hidden.has(c.key) ? "check_box_outline_blank" : "check_box"), el("span", { class: "grow" }, c.label))));
+    draw();
+    const r = anchor.getBoundingClientRect();
+    placeMenu(menu, r.right - 200, r.bottom + 4);
+  }
+
+  /* ----------------------------------------- table pages: checked rows */
+  /** the grid header's "select this page" checkbox over the page's row keys */
+  function pageCheckbox(keys, checked, onChange) {
+    const n = keys.filter((k) => checked.has(k)).length;
+    return el("th", { class: "cb" }, el("button", {
+      class: `cbx${n ? " on" : ""}`, title: n === keys.length ? "Unselect this page" : "Select this page",
+      onclick: () => { const all = n === keys.length; for (const k of keys) all ? checked.delete(k) : checked.add(k); onChange(); },
+    }, icon(n === 0 ? "check_box_outline_blank" : n === keys.length ? "check_box" : "indeterminate_check_box", "sm")));
+  }
+  const rowCheckbox = (key, on) => el("td", { class: "cb" }, el("button", { class: `cbx${on ? " on" : ""}`, "data-check": key, "aria-label": "Select row" },
+    icon(on ? "check_box" : "check_box_outline_blank", "sm")));
+  /** check / uncheck a row; shift-click sets the whole range from the anchor (the last row clicked) */
+  function toggleCheck(checked, keys, anchor, key, shift) {
+    if (shift && anchor) {
+      const [a, b] = [keys.indexOf(anchor), keys.indexOf(key)].sort((x, y) => x - y);
+      const on = !checked.has(key);
+      if (a >= 0) for (const k of keys.slice(a, b + 1)) on ? checked.add(k) : checked.delete(k);
+    } else checked.has(key) ? checked.delete(key) : checked.add(key);
+  }
+
+  /** how many of the targets carry a tag: all, some ("mixed") or none */
+  function coverage(targets, name) {
+    const have = targets.filter((x) => tagsFor(x).includes(name)).length;
+    const all = targets.length && have === targets.length;
+    return { have, all, aria: all ? "true" : have ? "mixed" : "false", icon: all ? "check_box" : have ? "indeterminate_check_box" : "check_box_outline_blank" };
+  }
+  /** toolbar for the checked rows: clear, select all rows (keys), and a tri-state chip per tag */
+  function bulkBar({ checked, keys, canSelectAll, targets, redraw }) {
+    const ts = targets();
+    return el("div", { class: "bulk-bar" },
+      el("button", { class: "icon-btn sm", title: "Clear selection", onclick: () => { checked.clear(); redraw(); } }, icon("close", "sm")),
+      el("b", {}, `${fmt(checked.size)} selected`),
+      canSelectAll ? el("button", { class: "btn text sm", onclick: () => { for (const k of keys) checked.add(k); redraw(); } }, `Select all ${fmt(keys.length)}`) : null,
+      el("span", { class: "muted", style: { margin: "0 4px" } }, "Tag:"),
+      ...W.tags.map((t) => {
+        const s = coverage(ts, t.name);
+        return el("button", {
+          class: `chip sm${s.all ? " all" : ""}`, style: { "--tag": t.color }, role: "checkbox", "aria-checked": s.aria,
+          title: s.all ? `Remove “${t.name}” from ${plural(ts.length, "item")}` : `Tag ${plural(ts.length, "item")} “${t.name}”`,
+          onclick: () => bulkTag(ts, t.name, !s.all),
+        }, icon(s.icon, "xs"), t.name);
+      }),
+      el("button", { class: "chip sm", onclick: async () => { const n = await newTag(); if (n) bulkTag(targets(), n, true); } }, icon("add", "xs"), "New"));
+  }
+  /** right-click menu for the checked rows */
+  function bulkMenu(x, y, targets, { withNewTag = true } = {}) {
+    closeMenus();
+    const menu = el("div", { class: "menu tag-menu", role: "menu" });
+    const draw = () => {
+      const ts = targets();
+      menu.replaceChildren(el("div", { class: "tm-head" }, "Tag selection", el("b", {}, plural(ts.length, "item"))),
+        ...W.tags.map((t) => {
+          const s = coverage(ts, t.name);
+          return el("button", { role: "menuitemcheckbox", "aria-checked": s.aria, onclick: async () => { await bulkTag(ts, t.name, !s.all); draw(); } },
+            icon(s.icon), el("span", { class: "dot", style: { background: t.color } }),
+            el("span", { class: "grow" }, t.name), s.have && !s.all ? el("span", { class: "sub" }, `${s.have}/${ts.length}`) : null);
+        }),
+        ...(withNewTag ? [el("button", { onclick: async () => { const n = await newTag(); if (n) { await bulkTag(targets(), n, true); draw(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…"))] : []));
+    };
+    draw();
+    placeMenu(menu, x, y);
   }
 
   /* ------------------------------------------------------ detail views */
@@ -479,17 +383,6 @@ const WS = (() => {
       onClose ? el("button", { class: "icon-btn sm", title: "Close", onclick: onClose }, icon("close", "sm")) : null);
   }
   const tag = (text) => el("span", { class: "tag" }, text);
-
-  function findingCard(f, { withConv = true } = {}) {
-    const c = W.convs.get(f.conv);
-    const ev = W.events.get(f.event);
-    return el("div", { class: `finding sev-${f.severity}`, style: { cursor: "default" } },
-      el("span", { class: "sev-chip" }, f.severity),
-      el("span", { class: "f-title" }, f.label),
-      el("span", { class: "f-detail" }, f.detail),
-      f.chain.length ? chainEl(f.chain) : null,
-      withConv ? el("div", { class: "f-meta" }, c ? `${c.host} / ${c.user} · ${c.title}` : "", ev ? ` · ${ev.label}` : "", ev && ev.ts ? ` · ${fmtTime(ev.ts)}` : "") : null);
-  }
 
   /** occurrences of a node, one card per paragraph, word highlighted */
   function occurrencesEl(n, limit = 25) {
@@ -578,10 +471,9 @@ const WS = (() => {
       const e = list[j];
       const text = e.p.map((pid) => W.paras.get(pid).t).join("\n\n");
       const mono = e.type === "tool_call" || e.type === "tool_result";
-      const fs = W.findingsByEvent.get(e.id) || [];
-      const worst = worstSeverity(fs);
+      const worst = SS.worstSeverity(W.findingsByEvent.get(e.id) || []);
       box.append(el("div", { class: `turn${j === i ? " focus" : " ctx"}` },
-        el("div", { class: "turn-head", html: `${avatarHTML(e.type)}<span class="who">${esc(e.label)}</span>` +
+        el("div", { class: "turn-head", html: `${M.avatarHTML(e.type)}<span class="who">${esc(e.label)}</span>` +
           (worst ? `<span class="sev-chip sev-${worst}">${worst}</span>` : "") + tagChipsHTML(tagsFor("event:" + e.id)) +
           `<span style="margin-left:auto">${esc(fmtTime(e.ts))}</span>` }),
         el("div", { class: `turn-text${mono ? " mono" : ""}` }, text.length > 4000 ? text.slice(0, 4000) + "…" : text)));
@@ -617,7 +509,7 @@ const WS = (() => {
       el("div", { class: "detail-actions" },
         el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id: evId, para: ev.p[0] }) }, icon("hub"), "Show in graph")),
       el("h4", {}, icon("forum", "xs"), "In context", el("span", { class: "grow" }), stepper("before", "before"), stepper("after", "after")), ctxBox);
-    return el("div", {}, detailHead(ROLE_ICON[ev.type] || "chat", k.color, ev.label,
+    return el("div", {}, detailHead(SS.ROLE_ICON[ev.type] || "chat", k.color, ev.label,
       [tag(`${c.host} / ${c.user}`), tag(c.title), ev.ts ? tag(fmtTime(ev.ts)) : null].filter(Boolean), onClose), body);
   }
 
@@ -635,7 +527,7 @@ const WS = (() => {
         el("dt", {}, "Size"), el("dd", {}, `${fmt(c.n_events)} steps · ${fmt(c.n_tool_calls)} tool calls · ${fmt(c.n_thoughts)} thoughts`),
         ...Object.entries(c.meta || {}).filter(([k]) => !["session_id", "format_version", "user_type"].includes(k))
           .flatMap(([k, v]) => [el("dt", {}, k.replace(/_/g, " ")), el("dd", {}, String(v))])),
-      fs.length ? el("div", { class: "sec-summary", style: { marginTop: "12px" } }, [...SEV_ORDER].reverse().filter((s) => bySev.get(s))
+      fs.length ? el("div", { class: "sec-summary", style: { marginTop: "12px" } }, [...SS.SEV_ORDER].reverse().filter((s) => bySev.get(s))
         .map((s) => el("span", { class: `chip sm sev-${s}` }, el("span", { class: "sev-chip" }, s), el("span", { class: "count" }, fmt(bySev.get(s)))))) : null,
       el("h4", {}, icon("sell", "xs"), "Tags & comment"), tagEditor("conv:" + cid),
       el("div", { class: "detail-actions" }, el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id: "conv:" + cid }) }, icon("hub"), "Show in graph")));
@@ -648,13 +540,13 @@ const WS = (() => {
   }
 
   return {
-    W, load, loadAnnotations, on, emit, broadcast, watchVersion,
-    SEV_ORDER, SEV_COLOR, sevRank, STRUCTURAL, LAYERS,
-    kindKey, kindOf, kindGroup, convVisible, nodeVisible, setFilter, renderFilterSelects,
-    targetOf, annOf, tagsFor, tagInfo, nodeTags, labelFor, convFor, tsFor, seenRange,
-    saveAnnotation, toggleTag, bulkTag, newTag, tagChipsHTML, openTagMenu, closeMenus, placeMenu, tagEditor, renderTagFilter,
-    findingsForNode, worstSeverity, secCategories, chainEl, endpointLabel,
-    fmtTime, fmtDay, markedHTML, avatarHTML, showInGraph, downloadCSV, makeRegex,
-    nodeDetail, turnDetail, convDetail, turnContext, findingCard,
+    W, load, on, watchVersion,
+    kindOf, kindGroup: M.kindGroup, convVisible, nodeVisible,
+    targetOf, annOf, tagsFor, nodeTags: M.nodeTags, labelFor, convFor: M.convFor, tsFor: M.tsFor, seenRange,
+    tagChipsHTML, openTagMenu: M.openTagMenu, tagEditor, renderTagFilter,
+    findingsForNode, chainEl, endpointLabel: M.endpointLabel, showInGraph,
+    wireTopbar, scopeSection, tagsHeading, renderScope, scopeActive, resetScope, renderCatChips, pager, columnsMenu,
+    pageCheckbox, rowCheckbox, toggleCheck, bulkBar, bulkMenu,
+    nodeDetail, turnDetail, convDetail,
   };
 })();

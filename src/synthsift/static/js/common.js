@@ -1,4 +1,5 @@
-/* Shared helpers for every page: API, DOM, theme, snackbar, dialogs, the loading screen and the module inspector. */
+/* Shared helpers for every page: API, DOM, theme, formatting, snackbar, menus, dialogs, the loading screen, the
+ * module inspector, and the graph / annotation model the graph page shares with the Nodes and Timeline pages. */
 "use strict";
 
 const SS = (() => {
@@ -104,9 +105,59 @@ const SS = (() => {
     return out;
   }
 
+  /* -------------------------------------------------------------- text */
   const fmt = (n) => Number(n).toLocaleString();
   const plural = (n, word, many) => `${fmt(n)} ${n === 1 ? word : many || word + "s"}`;
   const secs = (s) => (s >= 90 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : s >= 10 ? `${Math.round(s)} s` : `${(s || 0).toFixed(1)} s`);
+  function fmtTime(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    return isNaN(d) ? String(ts) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  function fmtDay(ts) {
+    const d = new Date(ts);
+    return isNaN(d) ? "Unknown date" : d.toLocaleDateString([], { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+  }
+  /** a search box's pattern: /regex/flags, or plain text matched case-insensitively; null when empty or invalid */
+  function makeRegex(q, global = false) {
+    const m = q.match(/^\/(.+)\/([a-z]*)$/);
+    try {
+      if (m) return new RegExp(m[1], m[2].replace("g", "") + (global ? "g" : ""));
+      return q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), global ? "gi" : "i") : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  const strHash = (s) => {
+    let h = 0;
+    for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return h;
+  };
+
+  /* --------------------------------------------------------- downloads */
+  function download(href, name) {
+    const a = el("a", { href, download: name });
+    document.body.append(a); a.click(); a.remove();
+  }
+  function downloadCSV(name, header, rows) {
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const text = [header.map(q).join(","), ...rows.map((r) => r.map(q).join(","))].join("\n");
+    download(URL.createObjectURL(new Blob([text], { type: "text/csv" })), name);
+  }
+
+  /* ------------------------------------------------------------- menus */
+  function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
+  /** show a menu at x, y (kept on screen); a mouse-down anywhere else closes it */
+  function placeMenu(menu, x, y) {
+    document.body.append(menu);
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
+    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
+    setTimeout(() => {
+      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close, true); } };
+      document.addEventListener("mousedown", close, true);
+    }, 0);
+  }
 
   /* ------------------------------------------------------------ dialog */
   function dialog({ title, iconName = "", body, wide = false, onClose = null }) {
@@ -119,7 +170,6 @@ const SS = (() => {
     const root = el("div", { class: "dialog-scrim", onclick: (e) => { if (e.target === root) close(); } }, card);
     document.body.append(root);
     document.addEventListener("keydown", onKey);
-    return { close, card };
   }
 
   /* ---------------------------------------------------- loading screen */
@@ -130,7 +180,6 @@ const SS = (() => {
     let root = null;
     let errorShown = "";
     const STATE_ICON = { done: "check_circle", cached: "check_circle", skipped: "remove", error: "error", waiting: "radio_button_unchecked" };
-    const KIND_LABEL = { extraction: "extraction", feature: "feature", label: "label", analysis: "analysis" };
     const STAGE_WEIGHT = { ingest: 0.1, segment: 0.1, enrich: 0.7, graph: 0.1 };
 
     function overall(st) {
@@ -158,7 +207,7 @@ const SS = (() => {
       const right = m.state === "running" ? m.message : m.state === "cached" ? "up to date" : m.state === "done" ? secs(m.seconds) : m.state === "waiting" ? "waiting" : m.message;
       return el("li", { class: `lc-step ${m.state}` },
         stateIcon(m.state),
-        el("span", { class: "grow lc-name" }, m.label, el("span", { class: `kind-chip ${m.kind}` }, KIND_LABEL[m.kind] || m.kind),
+        el("span", { class: "grow lc-name" }, m.label, el("span", { class: `kind-chip ${m.kind}` }, m.kind),
           m.workers && m.state === "running" && m.workers !== "thread" ? el("span", { class: "muted lc-workers" }, m.workers) : null),
         el("span", { class: "muted lc-val" }, right || ""),
         m.state === "running" && m.total ? el("div", { class: "mini-bar" }, el("div", { class: "bar", style: { width: pct + "%" } })) : null);
@@ -214,7 +263,7 @@ const SS = (() => {
       }
       hide();
     }
-    return { update, hide };
+    return { update };
   })();
 
   /* --------------------------------------------------- module inspector */
@@ -259,6 +308,242 @@ const SS = (() => {
     body.replaceChildren(...parts);
   }
 
-  return { store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, fmt, plural, secs, metaChips,
-           dialog, loading, inspect };
+  /* ------------------------------------------------ severities and kinds */
+  const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
+  const SEV_COLOR = { critical: "#A50E0E", high: "#D93025", medium: "#E37400", low: "#B08800", info: "#5F6368" };
+  const sevRank = (s) => SEV_ORDER.indexOf(s);
+  const worstSeverity = (fs) => fs.reduce((a, f) => (sevRank(f.severity) > sevRank(a) ? f.severity : a), "");
+
+  // "kinds" are the node types and entity categories, each with a label, group, icon and colour
+  const STRUCTURAL = new Set(["conversation", "user", "assistant", "system", "thought", "tool_call", "tool_arg", "tool_result", "tool_hub"]);
+  const KIND_GROUPS = ["Conversation structure", "Custom", "Technical", "People & orgs", "Places", "Things", "Time & numbers", "Other"];
+  const LAYERS = [
+    { key: "thought", label: "Thoughts", icon: "psychology" },
+    { key: "dialogue", label: "Dialogue", icon: "forum" },
+    { key: "action", label: "Actions", icon: "build" },
+    { key: "entity", label: "Entities", icon: "hub" },
+  ];
+  const ROLE_ICON = { user: "person", assistant: "smart_toy", system: "settings", thought: "psychology", tool_call: "build", tool_result: "output" };
+  // categories invented in a custom vocabulary (Settings → Modules → spaCy NLP) get a stable colour of their own
+  const EXTRA_COLORS = ["#7B1FA2", "#00897B", "#C0CA33", "#6D4C41", "#3949AB", "#D81B60", "#00ACC1", "#F4511E"];
+  const kindKey = (n) => (n.type === "entity" ? n.category : n.type);
+  /** fill a kinds map from the graph payload, with the colours picked in Settings */
+  function loadKinds(kinds, g, settings) {
+    kinds.clear();
+    for (const k of [...g.kinds.node_types, ...g.kinds.categories]) kinds.set(k.key, { ...k, color: settings["color." + k.key] || k.color });
+  }
+
+  /* --------------------------------------------------------- graph model */
+  // Lookups and analyst annotations over a page's loaded graph G: the graph page's state, or the workspace the
+  // Nodes and Timeline pages share. G holds kinds, convs, events, paras and nodes (Maps), filter, hiddenConvs,
+  // annotations and tags. Annotation targets are "conv:<cid>", "event:<event id>" and "term:<entity node id>".
+  //   onSaved()    runs after an annotation was saved
+  //   promptTag()  asks for a new tag's name in the tag menu (and may create the tag); resolves to it or null
+  function model(G, { onSaved, promptTag }) {
+    /* kinds */
+    function kind(key) {
+      let k = G.kinds.get(key);
+      if (!k) G.kinds.set(key, (k = { key, label: key.replace(/_/g, " "), group: "Custom", icon: "label", color: EXTRA_COLORS[strHash(key) % EXTRA_COLORS.length] }));
+      return k;
+    }
+    const kindOf = (n) => kind(kindKey(n));
+    const kindGroup = (key) => (STRUCTURAL.has(key) ? "Conversation structure" : (G.kinds.get(key) || {}).group || "Other");
+    const avatarHTML = (type) => `<span class="avatar" style="background:${esc((G.kinds.get(type) || {}).color || "#80868b")}"><span class="msi">${ROLE_ICON[type] || "chat"}</span></span>`;
+
+    /* conversation scope */
+    function convMatchesFilter(cid) {
+      const c = G.convs.get(cid);
+      if (!c) return false;
+      const f = G.filter;
+      return (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness)
+        && (!f.conv || c.id === f.conv);
+    }
+    const convVisible = (cid) => !G.hiddenConvs.has(cid) && convMatchesFilter(cid);
+
+    /* annotation targets */
+    function targetOf(nodeId) {
+      const n = G.nodes.get(nodeId);
+      if (!n) return null;
+      if (n.type === "conversation") return nodeId;
+      if (n.type === "entity") return "term:" + nodeId;
+      if (n.type === "tool_arg") return "event:" + n.event;
+      if (n.type === "tool_hub") return null;
+      return "event:" + nodeId;
+    }
+    const annOf = (t) => (t && G.annotations[t]) || null;
+    const tagsFor = (t) => (annOf(t) || {}).tags || [];
+    const tagInfo = (name) => G.tags.find((t) => t.name === name) || { name, color: "#5F6368", icon: "sell" };
+    // tags that apply to a node: its own, plus its conversation's for structural nodes
+    function nodeTags(nodeId) {
+      const own = tagsFor(targetOf(nodeId));
+      const n = G.nodes.get(nodeId);
+      if (n && n.type !== "entity" && n.type !== "conversation" && n.conv && n.conv[0]) {
+        const ct = tagsFor("conv:" + n.conv[0]);
+        if (ct.length) return [...new Set([...own, ...ct])];
+      }
+      return own;
+    }
+    /** earliest / latest timestamp a node appears at */
+    function seenRange(nodeId) {
+      const n = G.nodes.get(nodeId);
+      let lo = null, hi = null;
+      for (const [pid] of (n && n.occ) || []) {
+        const ts = G.events.get(G.paras.get(pid)?.e)?.ts;
+        if (!ts) continue;
+        if (!lo || ts < lo) lo = ts;
+        if (!hi || ts > hi) hi = ts;
+      }
+      return [lo, hi];
+    }
+    function labelFor(target) {
+      if (target.startsWith("conv:")) { const c = G.convs.get(target.slice(5)); return c ? c.title : target; }
+      if (target.startsWith("event:")) {
+        const ev = G.events.get(target.slice(6));
+        if (!ev) return target;
+        const first = ev.p.length ? G.paras.get(ev.p[0]).t.replace(/\s+/g, " ").slice(0, 90) : "";
+        return `${ev.label}${first ? " – " + first : ""}`;
+      }
+      const n = G.nodes.get(target.slice(5));
+      return n ? n.label : target.slice(5).replace(/^ent:/, "");
+    }
+    function convFor(target) {
+      if (target.startsWith("conv:")) return target.slice(5);
+      if (target.startsWith("event:")) { const ev = G.events.get(target.slice(6)); return ev ? ev.c : null; }
+      const n = G.nodes.get(target.slice(5));
+      return n && n.conv && n.conv.length ? n.conv[0] : null;
+    }
+    function tsFor(target) {
+      if (target.startsWith("conv:")) { const c = G.convs.get(target.slice(5)); return c ? c.started_at || null : null; }
+      if (target.startsWith("event:")) { const ev = G.events.get(target.slice(6)); return ev ? ev.ts || null : null; }
+      return seenRange(target.slice(5))[0];
+    }
+
+    /* saving */
+    async function loadAnnotations() {
+      try {
+        const r = await api("/api/annotations");
+        G.annotations = r.annotations || {};
+        G.tags = r.tags || [];
+      } catch (e) { /* keep previous */ }
+    }
+    /** store a target's tags and comment (undefined: keep the comment); throws when the server refuses */
+    async function putAnnotation(target, tags, comment) {
+      const prev = annOf(target);
+      const body = { target, tags, comment: comment ?? (prev ? prev.comment : ""), label: labelFor(target), conv: convFor(target), ts: tsFor(target) };
+      const r = await api("/api/annotations", { method: "PUT", body });
+      if (r.annotation) G.annotations[target] = r.annotation; else delete G.annotations[target];
+      G.tags = r.tags || G.tags;
+    }
+    async function saveAnnotation(target, tags, comment) {
+      try {
+        await putAnnotation(target, tags, comment);
+        onSaved();
+      } catch (e) {
+        snack("Could not save: " + e.message);
+      }
+    }
+    function toggleTag(target, tag) {
+      const cur = new Set(tagsFor(target));
+      cur.has(tag) ? cur.delete(tag) : cur.add(tag);
+      return saveAnnotation(target, [...cur]);
+    }
+    /** ask for a name and create a custom tag in the next palette colour; resolves to the name or null */
+    async function newTag() {
+      const name = (prompt("New tag name") || "").trim().toLowerCase();
+      if (!name) return null;
+      const color = ["#1A73E8", "#9334E6", "#12B5CB", "#E52592", "#188038", "#B06000"][G.tags.length % 6];
+      try {
+        G.tags = (await api("/api/tags", { method: "POST", body: { name, color } })).tags;
+        return name;
+      } catch (e) { snack(e.message); return null; }
+    }
+
+    /* tag views */
+    /** tag chips as HTML; `inherited` ones (a set) are drawn outlined */
+    const tagChipsHTML = (tags, inherited = null) => tags.map((t) => (inherited && inherited.has(t)
+      ? `<span class="tag-chip inherited" style="--tag:${esc(tagInfo(t).color)}" title="Inherited from the session">${esc(t)}</span>`
+      : `<span class="tag-chip" style="--tag:${esc(tagInfo(t).color)}">${esc(t)}</span>`)).join("");
+    const MENU_KIND = { conv: "Session", event: "Turn", term: "Term" };
+    /** right-click menu: tag checkboxes, "New tag…" and a comment */
+    function openTagMenu(target, x, y) {
+      if (!target) return;
+      closeMenus();
+      const what = target.split(":", 1)[0];
+      const menu = el("div", { class: "menu tag-menu", role: "menu" });
+      const render = () => {
+        const cur = new Set(tagsFor(target));
+        const a = annOf(target);
+        const items = G.tags.map((t) => el("button", {
+          role: "menuitemcheckbox", "aria-checked": cur.has(t.name) ? "true" : "false",
+          onclick: async () => { await toggleTag(target, t.name); render(); },
+        }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
+          el("span", { class: "grow" }, t.name)));
+        const ta = el("textarea", { class: "text-input", placeholder: "Analyst comment…" });
+        ta.value = a ? a.comment : "";
+        menu.replaceChildren(
+          el("div", { class: "tm-head" }, `Tag ${MENU_KIND[what] || what}`, el("b", { title: labelFor(target) }, labelFor(target))),
+          ...items,
+          el("button", { onclick: async () => { const n = await promptTag(); if (n) { await toggleTag(target, n); render(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")),
+          el("div", { class: "tm-comment" }, ta, el("div", { class: "tm-actions" },
+            el("button", { class: "btn text sm", onclick: async () => { await saveAnnotation(target, [], ""); menu.remove(); } }, "Clear all"),
+            el("button", { class: "btn filled sm", onclick: async () => { await saveAnnotation(target, [...tagsFor(target)], ta.value); menu.remove(); snack("Comment saved"); } }, "Save comment"))));
+      };
+      render();
+      placeMenu(menu, x, y);
+    }
+    /** one-click tag toggles (then `extra`, one more chip) and a comment box saved when it changes: [chips, textarea] */
+    function tagEditor(target, extra, { titles = false } = {}) {
+      const cur = new Set(tagsFor(target));
+      const chips = el("div", { class: "chip-row sel-tags" }, G.tags.map((t) => el("button", {
+        class: `chip sm${cur.has(t.name) ? " on" : ""}`, style: { "--tag": t.color }, title: titles ? `Tag as ${t.name}` : undefined,
+        role: "checkbox", "aria-checked": cur.has(t.name) ? "true" : "false", onclick: () => toggleTag(target, t.name),
+      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), t.name)), extra);
+      const ta = el("textarea", { class: "text-input sel-comment", placeholder: "Analyst comment (saved when you leave the box)…" });
+      ta.value = (annOf(target) || {}).comment || "";
+      ta.addEventListener("change", () => saveAnnotation(target, [...tagsFor(target)], ta.value));
+      return [chips, ta];
+    }
+
+    /* findings */
+    function endpointLabel(key) {
+      const n = G.nodes.get("ent:" + key);
+      if (n) return n.label;
+      const ev = G.events.get(key);
+      return ev ? ev.label : key;
+    }
+    function chainEl(chain) {
+      const box = el("div", { class: "chain" });
+      chain.forEach(([src, action, dst], i) => {
+        if (i === 0) box.append(el("span", { class: "node", title: endpointLabel(src) }, endpointLabel(src)));
+        box.append(el("span", { class: "arrow" }, action, icon("arrow_forward")));
+        box.append(el("span", { class: "node", title: endpointLabel(dst) }, endpointLabel(dst)));
+      });
+      return box;
+    }
+    /** "host / user · conversation", " · turn", " · time" of a finding */
+    function findingWhere(f, fallback = "") {
+      const c = G.convs.get(f.conv), ev = G.events.get(f.event);
+      return [c ? `${c.host} / ${c.user} · ${c.title}` : fallback, ev ? ` · ${ev.label}` : "", ev && ev.ts ? ` · ${fmtTime(ev.ts)}` : ""];
+    }
+    /** a finding card: severity, title (+ titleExtra), detail, data-flow chain and an optional meta line */
+    const findingCard = (f, attrs = {}, titleExtra = null, meta = null) => el("div", { class: `finding sev-${f.severity}`, ...attrs },
+      el("span", { class: "sev-chip" }, f.severity),
+      el("span", { class: "f-title" }, f.label, titleExtra),
+      el("span", { class: "f-detail" }, f.detail),
+      f.chain.length ? chainEl(f.chain) : null,
+      meta ? el("div", { class: "f-meta" }, meta) : null);
+
+    return {
+      kind, kindOf, kindGroup, avatarHTML, convMatchesFilter, convVisible,
+      targetOf, annOf, tagsFor, tagInfo, nodeTags, seenRange, labelFor, convFor, tsFor,
+      loadAnnotations, putAnnotation, toggleTag, newTag, tagChipsHTML, openTagMenu, tagEditor,
+      endpointLabel, chainEl, findingWhere, findingCard,
+    };
+  }
+
+  return {
+    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips,
+    fmt, plural, secs, fmtTime, fmtDay, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
+    SEV_ORDER, SEV_COLOR, sevRank, worstSeverity, STRUCTURAL, KIND_GROUPS, LAYERS, ROLE_ICON, kindKey, loadKinds, model,
+  };
 })();

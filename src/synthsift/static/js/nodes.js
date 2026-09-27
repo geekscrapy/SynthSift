@@ -28,21 +28,12 @@
     rows: [],
   };
   const save = () => {
-    store.set("nodes.q", P.q);
+    for (const k of ["q", "pageSize", "tagMode", "minSev", "minMentions"]) store.set("nodes." + k, P[k]);
+    for (const k of ["hiddenKinds", "hiddenLayers", "secCats", "lists", "hiddenCols"]) store.set("nodes." + k, [...P[k]]);
     store.set("nodes.sort", P.sort);
-    store.set("nodes.pageSize", P.pageSize);
-    store.set("nodes.hiddenKinds", [...P.hiddenKinds]);
-    store.set("nodes.hiddenLayers", [...P.hiddenLayers]);
-    store.set("nodes.tagMode", P.tagMode);
-    store.set("nodes.minSev", P.minSev);
-    store.set("nodes.secCats", [...P.secCats]);
-    store.set("nodes.lists", [...P.lists]);
-    store.set("nodes.minMentions", P.minMentions);
-    store.set("nodes.hiddenCols", [...P.hiddenCols]);
   };
 
-  const LAYER_LABEL = Object.fromEntries(WS.LAYERS.map((l) => [l.key, l.label]));
-  const GROUP_ORDER = ["Conversation structure", "Custom", "Technical", "People & orgs", "Places", "Things", "Time & numbers", "Other"];
+  const LAYER_LABEL = Object.fromEntries(SS.LAYERS.map((l) => [l.key, l.label]));
   const TAG_MODES = [["all", "All"], ["tagged", "Tagged"], ["untagged", "Untagged"], ["commented", "Commented"]];
 
   /* ------------------------------------------------ per-node derived data */
@@ -58,7 +49,7 @@
         group: WS.kindGroup(kind.key),
         mentions: n.type === "entity" ? n.count || 0 : (n.occ || []).length,
         fcount: fs.length,
-        sev: n.sec || WS.worstSeverity(fs) || "",
+        sev: n.sec || SS.worstSeverity(fs) || "",
         text: null,
       });
     }
@@ -84,7 +75,7 @@
     { key: "label", label: "Node", fixed: true, get: (r) => r.n.label.toLowerCase(), cell: nodeCell },
     { key: "type", label: "Type", get: (r) => r.m.kind.label, cell: (r) => el("td", { class: "cell-muted" }, r.m.kind.label) },
     {
-      key: "findings", label: "Findings", get: (r) => (r.m.sev ? (WS.sevRank(r.m.sev) + 1) * 1e6 : 0) + r.m.fcount, desc: true,
+      key: "findings", label: "Findings", get: (r) => (r.m.sev ? (SS.sevRank(r.m.sev) + 1) * 1e6 : 0) + r.m.fcount, desc: true,
       cell: (r) => el("td", { class: "nowrap", title: (r.n.secc || []).join(", ") }, r.m.sev ? el("span", { class: `sev-chip sev-${r.m.sev}` }, r.m.sev) : "",
         r.m.fcount > 1 ? el("span", { class: "cell-muted" }, ` ×${fmt(r.m.fcount)}`) : ""),
     },
@@ -105,8 +96,8 @@
       cell: (r) => el("td", { class: "num", title: r.convs.slice(0, 12).map((c) => W.convs.get(c).title).join("\n") }, fmt(r.convs.length)),
     },
     { key: "where", label: "Host / user", get: whereOf, cell: (r) => el("td", { class: "cell-muted" }, whereOf(r) || "–") },
-    { key: "first", label: "First seen", get: (r) => r.m.first || "", cell: (r) => el("td", { class: "cell-muted" }, WS.fmtTime(r.m.first) || "–") },
-    { key: "last", label: "Last seen", get: (r) => r.m.last || "", desc: true, cell: (r) => el("td", { class: "cell-muted" }, WS.fmtTime(r.m.last) || "–") },
+    { key: "first", label: "First seen", get: (r) => r.m.first || "", cell: (r) => el("td", { class: "cell-muted" }, SS.fmtTime(r.m.first) || "–") },
+    { key: "last", label: "Last seen", get: (r) => r.m.last || "", desc: true, cell: (r) => el("td", { class: "cell-muted" }, SS.fmtTime(r.m.last) || "–") },
   ];
   // session tags shown on a turn that doesn't carry them itself
   function inheritedTags(r) {
@@ -126,8 +117,8 @@
 
   /* -------------------------------------------------------------- filters */
   function computeRows() {
-    const rx = WS.makeRegex(P.q.trim());
-    const minRank = P.minSev ? WS.sevRank(P.minSev) : -1;
+    const rx = SS.makeRegex(P.q.trim());
+    const minRank = P.minSev ? SS.sevRank(P.minSev) : -1;
     const kindCounts = new Map(), layerCounts = new Map(), catCounts = new Map(), listCounts = new Map();
     const rows = [];
     let total = 0;
@@ -146,7 +137,7 @@
       if (n.type === "entity" && m.mentions < P.minMentions) continue;
       if (rx && !rx.test(n.label) && !(n.type !== "entity" && rx.test(textOf(n)))) continue;
       if (m.sev) for (const c of n.secc || []) catCounts.set(c, (catCounts.get(c) || 0) + 1);
-      if (minRank >= 0 && !(m.sev && WS.sevRank(m.sev) >= minRank)) continue;
+      if (minRank >= 0 && !(m.sev && SS.sevRank(m.sev) >= minRank)) continue;
       if (P.secCats.size && !(n.secc || []).some((c) => P.secCats.has(c))) continue;
       for (const l of n.labels || []) listCounts.set(l, (listCounts.get(l) || 0) + 1);
       if (P.lists.size && !(n.labels || []).some((l) => P.lists.has(l))) continue;
@@ -169,31 +160,28 @@
 
   function filtersActive() {
     return !!(P.q || P.hiddenKinds.size || P.hiddenLayers.size || P.tagMode !== "all" || P.minSev || P.secCats.size || P.lists.size || P.minMentions
-      || W.tagFilter.size || W.filter.host || W.filter.user || W.filter.harness || W.filter.conv);
+      || WS.scopeActive());
   }
   function resetFilters() {
     P.q = ""; $("q").value = "";
     P.hiddenKinds.clear(); P.hiddenLayers.clear(); P.tagMode = "all"; P.minSev = ""; P.secCats.clear(); P.lists.clear(); P.minMentions = 0;
     $("min-mentions").value = 0;
     save();
-    W.tagFilter.clear(); store.set("tagFilter", []); WS.broadcast({ type: "tagFilter", tags: [] });
-    WS.setFilter({ host: "", user: "", harness: "", conv: "" }); // re-renders via the "filters" event
+    WS.resetScope();
   }
 
   /* ----------------------------------------------------------------- rail */
   function buildRail() {
     const sev = el("select", { class: "select", id: "min-sev", onchange: (e) => { P.minSev = e.target.value; changed(); } },
       el("option", { value: "" }, "Any (flagged or not)"),
-      ...WS.SEV_ORDER.map((s) => el("option", { value: s }, s === "info" ? "Flagged (any severity)" : `Flagged ${s} or worse`)));
+      ...SS.SEV_ORDER.map((s) => el("option", { value: s }, s === "info" ? "Flagged (any severity)" : `Flagged ${s} or worse`)));
     sev.value = P.minSev;
     const mm = el("input", { class: "text-input", id: "min-mentions", type: "number", min: 0, step: 1, value: P.minMentions, style: { width: "84px" } });
     mm.addEventListener("input", debounce(() => { P.minMentions = Math.max(0, Number(mm.value) || 0); changed(); }, 200));
     $("rail").replaceChildren(
+      WS.scopeSection(resetFilters),
       el("div", { class: "rail-section" },
-        el("h3", {}, icon("filter_list", "xs"), "Filters", el("button", { id: "reset", onclick: resetFilters }, "Reset all")),
-        el("div", { id: "scope" }), el("div", { id: "hidden-note" })),
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("sell", "xs"), "Tags", el("button", { onclick: async () => { const n = await WS.newTag(); if (n) snack(`Tag “${n}” created`); } }, "New tag")),
+        WS.tagsHeading(),
         el("div", { class: "chip-row", id: "tagf" }),
         el("div", { class: "segmented sm", id: "tagmode", role: "group", "aria-label": "Tag state", style: { marginTop: "8px" } })),
       el("div", { class: "rail-section" },
@@ -212,26 +200,19 @@
   }
 
   function renderRail({ kindCounts, layerCounts, catCounts, listCounts }) {
-    WS.renderFilterSelects($("scope"));
-    const hidden = [...W.hiddenConvs].filter((c) => W.convs.has(c));
-    $("hidden-note").replaceChildren(...(hidden.length ? [el("div", { class: "field-row cell-muted" }, icon("visibility_off", "xs"),
-      el("span", { class: "grow" }, `${plural(hidden.length, "conversation")} hidden in the graph`),
-      el("button", { class: "btn text sm", onclick: () => { W.hiddenConvs.clear(); store.set("hiddenConvs", []); WS.setFilter({}); } }, "Show"))] : []));
+    WS.renderScope();
     WS.renderTagFilter($("tagf"));
     $("tagmode").replaceChildren(...TAG_MODES.map(([k, label]) => el("button", {
       class: P.tagMode === k ? "on" : "", onclick: () => { P.tagMode = k; changed(); },
     }, label)));
-    $("cats").replaceChildren(...WS.secCategories().filter((c) => catCounts.get(c.key) || P.secCats.has(c.key)).map((c) => el("button", {
-      class: `chip sm${P.secCats.has(c.key) ? " selected" : ""}`, title: `Only ${c.label.toLowerCase()} findings`,
-      onclick: () => { P.secCats.has(c.key) ? P.secCats.delete(c.key) : P.secCats.add(c.key); changed(); },
-    }, el("span", { class: "label" }, c.label), el("span", { class: "count" }, fmt(catCounts.get(c.key) || 0)))));
+    WS.renderCatChips($("cats"), catCounts, P.secCats, changed);
     const lists = [...new Set([...listCounts.keys(), ...P.lists])].sort();
     $("lists-sec").classList.toggle("hidden", !lists.length);
     $("listf").replaceChildren(...lists.map((l) => el("button", {
       class: `chip sm${P.lists.has(l) ? " selected" : ""}`, title: `Only terms on “${l}”`,
       onclick: () => { P.lists.has(l) ? P.lists.delete(l) : P.lists.add(l); changed(); },
     }, el("span", { class: "label" }, l), el("span", { class: "count" }, fmt(listCounts.get(l) || 0)))));
-    $("layers").replaceChildren(...WS.LAYERS.map((l) => el("button", {
+    $("layers").replaceChildren(...SS.LAYERS.map((l) => el("button", {
       class: `chip sm${P.hiddenLayers.has(l.key) ? " off" : " selected"}`, title: `Show / hide the ${l.label.toLowerCase()} layer`,
       onclick: () => { P.hiddenLayers.has(l.key) ? P.hiddenLayers.delete(l.key) : P.hiddenLayers.add(l.key); changed(); },
     }, icon(P.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "xs"), l.label, el("span", { class: "count" }, fmt(layerCounts.get(l.key) || 0)))));
@@ -247,7 +228,7 @@
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push({ ...W.kinds.get(key), key, n: 0 });
     }
-    $("kinds").replaceChildren(...[...groups.keys()].sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b)).map((g) => {
+    $("kinds").replaceChildren(...[...groups.keys()].sort((a, b) => SS.KIND_GROUPS.indexOf(a) - SS.KIND_GROUPS.indexOf(b)).map((g) => {
       const items = groups.get(g).sort((a, b) => b.n - a.n);
       const allOn = items.every((i) => !P.hiddenKinds.has(i.key));
       return el("div", { class: "rail-group" },
@@ -270,17 +251,10 @@
 
   function renderToolbar(total) {
     const n = P.rows.length;
-    const pages = Math.max(1, Math.ceil(n / P.pageSize));
-    const lo = n ? P.page * P.pageSize + 1 : 0, hi = Math.min(n, (P.page + 1) * P.pageSize);
-    const size = el("select", { "aria-label": "Rows per page", onchange: (e) => { P.pageSize = Number(e.target.value); P.page = 0; save(); render(); } },
-      ...[50, 100, 250, 500, 1000].map((s) => el("option", { value: s, selected: s === P.pageSize }, `${s} / page`)));
-    const pager = el("div", { class: "pager" }, size,
-      el("span", { style: { margin: "0 6px" } }, `${fmt(lo)}–${fmt(hi)} of ${fmt(n)}`),
-      el("button", { class: "icon-btn sm", title: "First page", disabled: P.page === 0, onclick: () => goPage(0) }, icon("first_page")),
-      el("button", { class: "icon-btn sm", title: "Previous page", disabled: P.page === 0, onclick: () => goPage(P.page - 1) }, icon("chevron_left")),
-      el("button", { class: "icon-btn sm", title: "Next page", disabled: P.page >= pages - 1, onclick: () => goPage(P.page + 1) }, icon("chevron_right")),
-      el("button", { class: "icon-btn sm", title: "Last page", disabled: P.page >= pages - 1, onclick: () => goPage(pages - 1) }, icon("last_page")));
-    const left = P.checked.size ? bulkBar() : el("span", { class: "count" },
+    const pager = WS.pager({ n, page: P.page, pageSize: P.pageSize, sizes: [50, 100, 250, 500, 1000], firstLast: true, goPage,
+      onSize: (size) => { P.pageSize = size; P.page = 0; save(); render(); } });
+    const left = P.checked.size ? WS.bulkBar({ checked: P.checked, keys: P.rows.map((r) => r.id), canSelectAll: P.rows.some((r) => !P.checked.has(r.id)),
+      targets: checkedTargets, redraw: () => render({ keepRail: true }) }) : el("span", { class: "count" },
       n === total ? plural(n, "node") : `${fmt(n)} of ${plural(total, "node")}`);
     $("toolbar").replaceChildren(left, el("span", { class: "grow" }), pager);
     $("q-result").textContent = P.q ? `${fmt(n)} ${n === 1 ? "node" : "nodes"}` : "";
@@ -289,59 +263,6 @@
     P.page = p;
     render({ keepRail: true });
     $("grid-wrap").scrollTop = 0;
-  }
-
-  // tri-state tag chips for the checked rows
-  function bulkBar() {
-    const targets = checkedTargets();
-    const inRows = P.rows.filter((r) => P.checked.has(r.id)).length;
-    const bar = el("div", { class: "bulk-bar" },
-      el("button", { class: "icon-btn sm", title: "Clear selection", onclick: () => { P.checked.clear(); render({ keepRail: true }); } }, icon("close", "sm")),
-      el("b", {}, `${fmt(P.checked.size)} selected`),
-      inRows < P.rows.length ? el("button", { class: "btn text sm", onclick: () => { for (const r of P.rows) P.checked.add(r.id); render({ keepRail: true }); } }, `Select all ${fmt(P.rows.length)}`) : null,
-      el("span", { class: "muted", style: { margin: "0 4px" } }, "Tag:"),
-      ...W.tags.map((t) => {
-        const have = targets.filter((x) => WS.tagsFor(x).includes(t.name)).length;
-        const all = targets.length && have === targets.length;
-        return el("button", {
-          class: `chip sm${all ? " all" : ""}`, style: { "--tag": t.color }, role: "checkbox", "aria-checked": all ? "true" : have ? "mixed" : "false",
-          title: all ? `Remove “${t.name}” from ${plural(targets.length, "item")}` : `Tag ${plural(targets.length, "item")} “${t.name}”`,
-          onclick: () => WS.bulkTag(targets, t.name, !all),
-        }, icon(all ? "check_box" : have ? "indeterminate_check_box" : "check_box_outline_blank", "xs"), t.name);
-      }),
-      el("button", { class: "chip sm", onclick: async () => { const n = await WS.newTag(); if (n) WS.bulkTag(checkedTargets(), n, true); } }, icon("add", "xs"), "New"));
-    return bar;
-  }
-
-  function bulkMenu(x, y) {
-    WS.closeMenus();
-    const menu = el("div", { class: "menu tag-menu", role: "menu" });
-    const draw = () => {
-      const targets = checkedTargets();
-      menu.replaceChildren(el("div", { class: "tm-head" }, "Tag selection", el("b", {}, plural(targets.length, "item"))),
-        ...W.tags.map((t) => {
-          const have = targets.filter((x) => WS.tagsFor(x).includes(t.name)).length;
-          const all = targets.length && have === targets.length;
-          return el("button", { role: "menuitemcheckbox", "aria-checked": all ? "true" : have ? "mixed" : "false", onclick: async () => { await WS.bulkTag(targets, t.name, !all); draw(); } },
-            icon(all ? "check_box" : have ? "indeterminate_check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
-            el("span", { class: "grow" }, t.name), have && !all ? el("span", { class: "sub" }, `${have}/${targets.length}`) : null);
-        }),
-        el("button", { onclick: async () => { const n = await WS.newTag(); if (n) { await WS.bulkTag(checkedTargets(), n, true); draw(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")));
-    };
-    draw();
-    WS.placeMenu(menu, x, y);
-  }
-
-  function columnsMenu(anchor) {
-    WS.closeMenus();
-    const menu = el("div", { class: "menu", role: "menu" });
-    const draw = () => menu.replaceChildren(...COLS.filter((c) => !c.fixed).map((c) => el("button", {
-      role: "menuitemcheckbox", "aria-checked": P.hiddenCols.has(c.key) ? "false" : "true",
-      onclick: () => { P.hiddenCols.has(c.key) ? P.hiddenCols.delete(c.key) : P.hiddenCols.add(c.key); save(); renderGrid(); draw(); },
-    }, icon(P.hiddenCols.has(c.key) ? "check_box_outline_blank" : "check_box"), el("span", { class: "grow" }, c.label))));
-    draw();
-    const r = anchor.getBoundingClientRect();
-    WS.placeMenu(menu, r.right - 200, r.bottom + 4);
   }
 
   /* ----------------------------------------------------------------- grid */
@@ -359,12 +280,7 @@
     }
     const cols = visibleCols();
     const rows = pageRows();
-    const nChecked = rows.filter((r) => P.checked.has(r.id)).length;
-    const head = el("tr", {},
-      el("th", { class: "cb" }, el("button", {
-        class: `cbx${nChecked ? " on" : ""}`, title: nChecked === rows.length ? "Unselect this page" : "Select this page",
-        onclick: () => { const all = nChecked === rows.length; for (const r of rows) all ? P.checked.delete(r.id) : P.checked.add(r.id); render({ keepRail: true }); },
-      }, icon(nChecked === 0 ? "check_box_outline_blank" : nChecked === rows.length ? "check_box" : "indeterminate_check_box", "sm"))),
+    const head = el("tr", {}, WS.pageCheckbox(rows.map((r) => r.id), P.checked, () => render({ keepRail: true })),
       ...cols.map((c) => {
         const on = P.sort.key === c.key;
         return el("th", { class: `${c.num ? "num" : ""}${on ? " sorted" : ""}`, "aria-sort": on ? (P.sort.dir > 0 ? "ascending" : "descending") : "none" },
@@ -382,8 +298,7 @@
         "data-id": r.id,
         class: `${P.checked.has(r.id) ? "checked" : ""}${P.detail && P.detail.id === r.id ? " selected" : ""}`,
         title: "Click for details · double-click to show in the graph · right-click to tag",
-      }, el("td", { class: "cb" }, el("button", { class: `cbx${P.checked.has(r.id) ? " on" : ""}`, "data-check": r.id, "aria-label": "Select row" },
-        icon(P.checked.has(r.id) ? "check_box" : "check_box_outline_blank", "sm"))), ...cols.map((c) => c.cell(r)));
+      }, WS.rowCheckbox(r.id, P.checked.has(r.id)), ...cols.map((c) => c.cell(r)));
       tbody.append(tr);
     }
     const keep = wrap.scrollTop;
@@ -397,12 +312,7 @@
     if (!tr) return;
     const id = tr.dataset.id;
     if (cb) {
-      if (e.shiftKey && P.anchor) {
-        const ids = pageRows().map((r) => r.id);
-        const [a, b] = [ids.indexOf(P.anchor), ids.indexOf(id)].sort((x, y) => x - y);
-        const on = !P.checked.has(id);
-        if (a >= 0) for (const x of ids.slice(a, b + 1)) on ? P.checked.add(x) : P.checked.delete(x);
-      } else P.checked.has(id) ? P.checked.delete(id) : P.checked.add(id);
+      WS.toggleCheck(P.checked, pageRows().map((r) => r.id), P.anchor, id, e.shiftKey);
       P.anchor = id;
       render({ keepRail: true });
       return;
@@ -466,7 +376,7 @@
         [...new Set(cs.map((c) => c.host))].join(" "), [...new Set(cs.map((c) => c.user))].join(" "), r.m.sev, r.m.fcount,
         (r.n.secc || []).join(" "), r.tags.join(" "), r.ann ? r.ann.comment : "", r.m.first || "", r.m.last || ""];
     });
-    WS.downloadCSV("synthsift-nodes.csv", header, rows);
+    SS.downloadCSV("synthsift-nodes.csv", header, rows);
     snack(`Exported ${plural(rows.length, "node")}`);
   }
 
@@ -495,23 +405,18 @@
       const tr = e.target.closest("tr[data-id]");
       if (!tr) return;
       e.preventDefault();
-      if (P.checked.size > 1 && P.checked.has(tr.dataset.id)) bulkMenu(e.clientX, e.clientY);
+      if (P.checked.size > 1 && P.checked.has(tr.dataset.id)) WS.bulkMenu(e.clientX, e.clientY, checkedTargets);
       else {
         const t = WS.targetOf(tr.dataset.id);
         t ? WS.openTagMenu(t, e.clientX, e.clientY) : snack("Tool hubs can't be tagged – tag the individual calls instead.");
       }
     });
     $("btn-csv").addEventListener("click", exportCSV);
-    $("btn-cols").addEventListener("click", (e) => { e.stopPropagation(); columnsMenu(e.currentTarget); });
-    const themeIcon = () => ($("btn-theme").querySelector(".msi").textContent = SS.effectiveTheme(store.get("theme", "auto")) === "dark" ? "light_mode" : "dark_mode");
-    $("btn-theme").addEventListener("click", () => { SS.applyTheme(SS.effectiveTheme(store.get("theme", "auto")) === "dark" ? "light" : "dark"); themeIcon(); });
-    themeIcon();
-    const shell = $("shell");
-    shell.classList.toggle("rail-closed", store.get("nodes.railClosed", false));
-    $("btn-rail").addEventListener("click", () => { shell.classList.toggle("rail-closed"); store.set("nodes.railClosed", shell.classList.contains("rail-closed")); });
+    $("btn-cols").addEventListener("click", (e) => { e.stopPropagation(); WS.columnsMenu(e.currentTarget, COLS, P.hiddenCols, () => { save(); renderGrid(); }); });
+    WS.wireTopbar("nodes.railClosed");
     document.addEventListener("keydown", (e) => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-      if (e.key === "Escape") { if (document.querySelector(".menu")) WS.closeMenus(); else if (!typing) closeDetail(); return; }
+      if (e.key === "Escape") { if (document.querySelector(".menu")) SS.closeMenus(); else if (!typing) closeDetail(); return; }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/") { e.preventDefault(); q.focus(); q.select(); }
       else if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); moveSelection(1); }

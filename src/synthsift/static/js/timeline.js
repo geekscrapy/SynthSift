@@ -37,9 +37,7 @@
   };
   const save = () => {
     for (const k of ["q", "order", "minSev", "commentedOnly", "from", "to", "pageSize"]) store.set("timeline." + k, P[k]);
-    store.set("timeline.kinds", [...P.kinds]);
-    store.set("timeline.secCats", [...P.secCats]);
-    store.set("timeline.hiddenCols", [...P.hiddenCols]);
+    for (const k of ["kinds", "secCats", "hiddenCols"]) store.set("timeline." + k, [...P[k]]);
   };
 
   /* ---------------------------------------------------------------- rows */
@@ -56,7 +54,7 @@
       rows.push({
         key: target, kind, target, nodeId, conv, when: a.ts || WS.tsFor(target) || "",
         label: a.label || WS.labelFor(target), tags: a.tags, comment: a.comment || "",
-        severity: WS.worstSeverity(fs), cats: [...new Set(fs.map((f) => f.category))], finding: null,
+        severity: SS.worstSeverity(fs), cats: [...new Set(fs.map((f) => f.category))], finding: null,
       });
     }
     for (const f of W.findings) {
@@ -84,8 +82,8 @@
   }
 
   function computeRows() {
-    const rx = WS.makeRegex(P.q.trim());
-    const minRank = P.minSev ? WS.sevRank(P.minSev) : -1;
+    const rx = SS.makeRegex(P.q.trim());
+    const minRank = P.minSev ? SS.sevRank(P.minSev) : -1;
     const kindCounts = new Map(), catCounts = new Map();
     const out = [];
     let total = 0;
@@ -101,7 +99,7 @@
       if (rx && !rx.test(searchText(r))) continue;
       if (r.kind === "finding") {
         for (const c of r.cats) catCounts.set(c, (catCounts.get(c) || 0) + 1);
-        if (minRank >= 0 && WS.sevRank(r.severity) < minRank) continue;
+        if (minRank >= 0 && SS.sevRank(r.severity) < minRank) continue;
         if (P.secCats.size && !r.cats.some((c) => P.secCats.has(c))) continue;
       }
       kindCounts.set(r.kind, (kindCounts.get(r.kind) || 0) + 1);
@@ -118,22 +116,20 @@
   }
 
   function filtersActive() {
-    return !!(P.q || P.kinds.size < KINDS.length || P.minSev || P.secCats.size || P.commentedOnly || P.from || P.to
-      || W.tagFilter.size || W.filter.host || W.filter.user || W.filter.harness || W.filter.conv);
+    return !!(P.q || P.kinds.size < KINDS.length || P.minSev || P.secCats.size || P.commentedOnly || P.from || P.to || WS.scopeActive());
   }
   function resetFilters() {
     P.q = ""; $("q").value = "";
     P.kinds = new Set(KINDS.map((k) => k.key)); P.minSev = ""; P.secCats.clear(); P.commentedOnly = false; P.from = ""; P.to = "";
     $("min-sev").value = ""; $("d-from").value = ""; $("d-to").value = "";
     save();
-    W.tagFilter.clear(); store.set("tagFilter", []); WS.broadcast({ type: "tagFilter", tags: [] });
-    WS.setFilter({ host: "", user: "", harness: "", conv: "" });
+    WS.resetScope();
   }
 
   /* ---------------------------------------------------------------- rail */
   function buildRail() {
     const sev = el("select", { class: "select", id: "min-sev", onchange: (e) => { P.minSev = e.target.value; changed(); } },
-      el("option", { value: "" }, "All severities"), ...WS.SEV_ORDER.slice(1).map((s) => el("option", { value: s }, `${s[0].toUpperCase() + s.slice(1)} or worse`)));
+      el("option", { value: "" }, "All severities"), ...SS.SEV_ORDER.slice(1).map((s) => el("option", { value: s }, `${s[0].toUpperCase() + s.slice(1)} or worse`)));
     sev.value = P.minSev;
     const date = (id, key, label) => {
       const inp = el("input", { class: "text-input", type: "date", id, "aria-label": label, value: P[key] || null });
@@ -141,14 +137,12 @@
       return inp;
     };
     $("rail").replaceChildren(
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("filter_list", "xs"), "Filters", el("button", { id: "reset", onclick: resetFilters }, "Reset all")),
-        el("div", { id: "scope" }), el("div", { id: "hidden-note" })),
+      WS.scopeSection(resetFilters),
       el("div", { class: "rail-section" },
         el("h3", {}, icon("view_list", "xs"), "Show"),
         el("div", { class: "chip-row", id: "kinds" })),
       el("div", { class: "rail-section" },
-        el("h3", {}, icon("sell", "xs"), "Tags", el("button", { onclick: async () => { const n = await WS.newTag(); if (n) snack(`Tag “${n}” created`); } }, "New tag")),
+        WS.tagsHeading(),
         el("div", { class: "chip-row", id: "tagf" }),
         el("div", { class: "chip-row", style: { marginTop: "6px" } }, el("button", { id: "commented", onclick: () => { P.commentedOnly = !P.commentedOnly; changed(); } }))),
       el("div", { class: "rail-section" },
@@ -163,11 +157,7 @@
   }
 
   function renderRail({ kindCounts, catCounts }) {
-    WS.renderFilterSelects($("scope"));
-    const hidden = [...W.hiddenConvs].filter((c) => W.convs.has(c));
-    $("hidden-note").replaceChildren(...(hidden.length ? [el("div", { class: "field-row cell-muted" }, icon("visibility_off", "xs"),
-      el("span", { class: "grow" }, `${plural(hidden.length, "conversation")} hidden in the graph`),
-      el("button", { class: "btn text sm", onclick: () => { W.hiddenConvs.clear(); store.set("hiddenConvs", []); WS.setFilter({}); } }, "Show"))] : []));
+    WS.renderScope();
     $("kinds").replaceChildren(...KINDS.map((k) => el("button", {
       class: `chip sm${P.kinds.has(k.key) ? " selected" : " off"}`, title: `Show / hide ${k.label.toLowerCase()} – shift-click to show only these`,
       onclick: (e) => {
@@ -180,10 +170,7 @@
     const cm = $("commented");
     cm.className = `chip sm${P.commentedOnly ? " selected" : ""}`;
     cm.replaceChildren(icon("comment", "xs"), "With comments only");
-    $("cats").replaceChildren(...WS.secCategories().filter((c) => catCounts.get(c.key) || P.secCats.has(c.key)).map((c) => el("button", {
-      class: `chip sm${P.secCats.has(c.key) ? " selected" : ""}`, title: `Only ${c.label.toLowerCase()} findings`,
-      onclick: () => { P.secCats.has(c.key) ? P.secCats.delete(c.key) : P.secCats.add(c.key); changed(); },
-    }, el("span", { class: "label" }, c.label), el("span", { class: "count" }, fmt(catCounts.get(c.key) || 0)))));
+    WS.renderCatChips($("cats"), catCounts, P.secCats, changed);
     $("order").replaceChildren(...[[1, "Oldest first", "arrow_downward"], [-1, "Newest first", "arrow_upward"]].map(([v, label, ic]) =>
       el("button", { class: P.order === v ? "on" : "", onclick: () => { P.order = v; changed(); } }, icon(ic, "xs"), label)));
     $("reset").classList.toggle("hidden", !filtersActive());
@@ -238,17 +225,12 @@
 
   function renderToolbar(total) {
     const n = P.rows.length;
-    const pages = Math.max(1, Math.ceil(n / P.pageSize));
-    const lo = n ? P.page * P.pageSize + 1 : 0, hi = Math.min(n, (P.page + 1) * P.pageSize);
-    const size = el("select", { "aria-label": "Rows per page", onchange: (e) => { P.pageSize = Number(e.target.value); P.page = 0; save(); render(); } },
-      ...[100, 250, 500, 1000].map((s) => el("option", { value: s, selected: s === P.pageSize }, `${s} / page`)));
-    const pager = el("div", { class: "pager" }, size,
-      el("span", { style: { margin: "0 6px" } }, `${fmt(lo)}–${fmt(hi)} of ${fmt(n)}`),
-      el("button", { class: "icon-btn sm", title: "Previous page", disabled: P.page === 0, onclick: () => goPage(P.page - 1) }, icon("chevron_left")),
-      el("button", { class: "icon-btn sm", title: "Next page", disabled: P.page >= pages - 1, onclick: () => goPage(P.page + 1) }, icon("chevron_right")));
+    const pager = WS.pager({ n, page: P.page, pageSize: P.pageSize, sizes: [100, 250, 500, 1000], goPage,
+      onSize: (size) => { P.pageSize = size; P.page = 0; save(); render(); } });
     const days = P.dayCounts.size;
     const nf = P.rows.filter((r) => r.kind === "finding").length;
-    const left = P.checked.size ? bulkBar() : el("span", { class: "count" },
+    const left = P.checked.size ? WS.bulkBar({ checked: P.checked, keys: P.rows.map((r) => r.key), canSelectAll: P.checked.size < P.rows.length,
+      targets: checkedTargets, redraw: () => render({ keepRail: true }) }) : el("span", { class: "count" },
       `${plural(n - nf, "tagged row")}${nf ? ` · ${plural(nf, "finding")}` : ""} · ${plural(days, "day")}`,
       total && n - nf < total ? el("span", { class: "muted" }, ` (of ${fmt(total)} tagged)`) : null);
     $("toolbar").replaceChildren(left, el("span", { class: "grow" }), pager);
@@ -258,55 +240,6 @@
     P.page = p;
     render({ keepRail: true });
     $("grid-wrap").scrollTop = 0;
-  }
-
-  function tagTriState(targets, t, onDone) {
-    const have = targets.filter((x) => WS.tagsFor(x).includes(t.name)).length;
-    const all = targets.length && have === targets.length;
-    return { have, all, run: async () => { await WS.bulkTag(targets, t.name, !all); onDone && onDone(); } };
-  }
-  function bulkBar() {
-    const targets = checkedTargets();
-    return el("div", { class: "bulk-bar" },
-      el("button", { class: "icon-btn sm", title: "Clear selection", onclick: () => { P.checked.clear(); render({ keepRail: true }); } }, icon("close", "sm")),
-      el("b", {}, `${fmt(P.checked.size)} selected`),
-      P.checked.size < P.rows.length ? el("button", { class: "btn text sm", onclick: () => { for (const r of P.rows) P.checked.add(r.key); render({ keepRail: true }); } }, `Select all ${fmt(P.rows.length)}`) : null,
-      el("span", { class: "muted", style: { margin: "0 4px" } }, "Tag:"),
-      ...W.tags.map((t) => {
-        const s = tagTriState(targets, t);
-        return el("button", {
-          class: `chip sm${s.all ? " all" : ""}`, style: { "--tag": t.color }, role: "checkbox", "aria-checked": s.all ? "true" : s.have ? "mixed" : "false",
-          title: s.all ? `Remove “${t.name}” from ${plural(targets.length, "item")}` : `Tag ${plural(targets.length, "item")} “${t.name}”`, onclick: s.run,
-        }, icon(s.all ? "check_box" : s.have ? "indeterminate_check_box" : "check_box_outline_blank", "xs"), t.name);
-      }),
-      el("button", { class: "chip sm", onclick: async () => { const n = await WS.newTag(); if (n) WS.bulkTag(checkedTargets(), n, true); } }, icon("add", "xs"), "New"));
-  }
-  function bulkMenu(x, y) {
-    WS.closeMenus();
-    const menu = el("div", { class: "menu tag-menu", role: "menu" });
-    const draw = () => {
-      const targets = checkedTargets();
-      menu.replaceChildren(el("div", { class: "tm-head" }, "Tag selection", el("b", {}, plural(targets.length, "item"))),
-        ...W.tags.map((t) => {
-          const s = tagTriState(targets, t, draw);
-          return el("button", { role: "menuitemcheckbox", "aria-checked": s.all ? "true" : s.have ? "mixed" : "false", onclick: s.run },
-            icon(s.all ? "check_box" : s.have ? "indeterminate_check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
-            el("span", { class: "grow" }, t.name), s.have && !s.all ? el("span", { class: "sub" }, `${s.have}/${targets.length}`) : null);
-        }));
-    };
-    draw();
-    WS.placeMenu(menu, x, y);
-  }
-  function columnsMenu(anchor) {
-    WS.closeMenus();
-    const menu = el("div", { class: "menu", role: "menu" });
-    const draw = () => menu.replaceChildren(...COLS.filter((c) => !c.fixed).map((c) => el("button", {
-      role: "menuitemcheckbox", "aria-checked": P.hiddenCols.has(c.key) ? "false" : "true",
-      onclick: () => { P.hiddenCols.has(c.key) ? P.hiddenCols.delete(c.key) : P.hiddenCols.add(c.key); save(); renderGrid(); draw(); },
-    }, icon(P.hiddenCols.has(c.key) ? "check_box_outline_blank" : "check_box"), el("span", { class: "grow" }, c.label))));
-    draw();
-    const r = anchor.getBoundingClientRect();
-    WS.placeMenu(menu, r.right - 200, r.bottom + 4);
   }
 
   /* ------------------------------------------------------------------ grid */
@@ -325,12 +258,7 @@
     }
     const cols = visibleCols();
     const rows = pageRows();
-    const nChecked = rows.filter((r) => P.checked.has(r.key)).length;
-    const head = el("tr", {},
-      el("th", { class: "cb" }, el("button", {
-        class: `cbx${nChecked ? " on" : ""}`, title: nChecked === rows.length ? "Unselect this page" : "Select this page",
-        onclick: () => { const all = nChecked === rows.length; for (const r of rows) all ? P.checked.delete(r.key) : P.checked.add(r.key); render({ keepRail: true }); },
-      }, icon(nChecked === 0 ? "check_box_outline_blank" : nChecked === rows.length ? "check_box" : "indeterminate_check_box", "sm"))),
+    const head = el("tr", {}, WS.pageCheckbox(rows.map((r) => r.key), P.checked, () => render({ keepRail: true })),
       ...cols.map((c) => el("th", {}, c.key === "when"
         ? el("button", { title: "Reverse the order", onclick: () => { P.order = -P.order; changed(); } }, c.label, icon(P.order > 0 ? "arrow_downward" : "arrow_upward"))
         : el("button", { style: { cursor: "default" } }, c.label))));
@@ -342,14 +270,13 @@
         day = d;
         const n = P.dayCounts.get(d) || 0;
         tbody.append(el("tr", { class: "day" }, el("td", { colspan: cols.length + 1 },
-          d ? WS.fmtDay(r.when) : "No timestamp", el("span", { class: "muted", style: { fontWeight: 400, marginLeft: "8px" } }, plural(n, "row")))));
+          d ? SS.fmtDay(r.when) : "No timestamp", el("span", { class: "muted", style: { fontWeight: 400, marginLeft: "8px" } }, plural(n, "row")))));
       }
       tbody.append(el("tr", {
         "data-key": r.key,
         class: `${P.checked.has(r.key) ? "checked" : ""}${P.detail === r.key ? " selected" : ""}${r.kind === "finding" ? ` f-row sev-${r.severity}` : ""}`,
         title: "Click for details · double-click to show in the graph · right-click to tag",
-      }, el("td", { class: "cb" }, el("button", { class: `cbx${P.checked.has(r.key) ? " on" : ""}`, "data-check": r.key, "aria-label": "Select row" },
-        icon(P.checked.has(r.key) ? "check_box" : "check_box_outline_blank", "sm"))), ...cols.map((c) => c.cell(r))));
+      }, WS.rowCheckbox(r.key, P.checked.has(r.key)), ...cols.map((c) => c.cell(r))));
     }
     const keep = wrap.scrollTop;
     wrap.replaceChildren(el("table", { class: "data-grid timeline-grid" }, el("thead", {}, head), tbody));
@@ -361,12 +288,7 @@
     if (!tr || e.target.closest(".tag-menu")) return;
     const key = tr.dataset.key;
     if (e.target.closest("[data-check]")) {
-      if (e.shiftKey && P.anchor) {
-        const keys = pageRows().map((r) => r.key);
-        const [a, b] = [keys.indexOf(P.anchor), keys.indexOf(key)].sort((x, y) => x - y);
-        const on = !P.checked.has(key);
-        if (a >= 0) for (const k of keys.slice(a, b + 1)) on ? P.checked.add(k) : P.checked.delete(k);
-      } else P.checked.has(key) ? P.checked.delete(key) : P.checked.add(key);
+      WS.toggleCheck(P.checked, pageRows().map((r) => r.key), P.anchor, key, e.shiftKey);
       P.anchor = key;
       render({ keepRail: true });
       return;
@@ -446,7 +368,7 @@
       const chain = r.finding ? r.finding.chain.map((x) => `${WS.endpointLabel(x[0])} -${x[1]}-> ${WS.endpointLabel(x[2])}`).join("; ") : "";
       return [r.when, KIND_LABEL[r.kind], r.severity, r.label, r.detail || "", chain, r.tags.join(" "), r.comment, c.host, c.user, c.harness, c.title, c.source, r.target];
     });
-    WS.downloadCSV("synthsift-timeline.csv", header, rows);
+    SS.downloadCSV("synthsift-timeline.csv", header, rows);
     snack(`Exported ${plural(rows.length, "row")}`);
   }
 
@@ -481,20 +403,15 @@
       const tr = e.target.closest("tr[data-key]");
       if (!tr) return;
       e.preventDefault();
-      if (P.checked.size > 1 && P.checked.has(tr.dataset.key)) bulkMenu(e.clientX, e.clientY);
+      if (P.checked.size > 1 && P.checked.has(tr.dataset.key)) WS.bulkMenu(e.clientX, e.clientY, checkedTargets, { withNewTag: false });
       else { const r = rowByKey(tr.dataset.key); if (r) WS.openTagMenu(r.target, e.clientX, e.clientY); }
     });
     $("btn-csv").addEventListener("click", exportCSV);
-    $("btn-cols").addEventListener("click", (e) => { e.stopPropagation(); columnsMenu(e.currentTarget); });
-    const themeIcon = () => ($("btn-theme").querySelector(".msi").textContent = SS.effectiveTheme(store.get("theme", "auto")) === "dark" ? "light_mode" : "dark_mode");
-    $("btn-theme").addEventListener("click", () => { SS.applyTheme(SS.effectiveTheme(store.get("theme", "auto")) === "dark" ? "light" : "dark"); themeIcon(); });
-    themeIcon();
-    const shell = $("shell");
-    shell.classList.toggle("rail-closed", store.get("timeline.railClosed", false));
-    $("btn-rail").addEventListener("click", () => { shell.classList.toggle("rail-closed"); store.set("timeline.railClosed", shell.classList.contains("rail-closed")); });
+    $("btn-cols").addEventListener("click", (e) => { e.stopPropagation(); WS.columnsMenu(e.currentTarget, COLS, P.hiddenCols, () => { save(); renderGrid(); }); });
+    WS.wireTopbar("timeline.railClosed");
     document.addEventListener("keydown", (e) => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-      if (e.key === "Escape") { if (document.querySelector(".menu")) WS.closeMenus(); else if (!typing) closeDetail(); return; }
+      if (e.key === "Escape") { if (document.querySelector(".menu")) SS.closeMenus(); else if (!typing) closeDetail(); return; }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/") { e.preventDefault(); q.focus(); q.select(); }
       else if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); moveSelection(1); }

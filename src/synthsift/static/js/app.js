@@ -2,16 +2,9 @@
 "use strict";
 
 (() => {
-  const { store, api, esc, el, icon, snack, debounce, fmt, plural } = SS;
+  const { store, api, esc, el, icon, snack, debounce, fmt, plural, fmtTime, makeRegex, closeMenus, placeMenu } = SS;
+  const { SEV_ORDER, SEV_COLOR, sevRank, STRUCTURAL, LAYERS, kindKey } = SS;
   const $ = (id) => document.getElementById(id);
-
-  const LAYERS = [
-    { key: "thought", label: "Thoughts", icon: "psychology" },
-    { key: "dialogue", label: "Dialogue", icon: "forum" },
-    { key: "action", label: "Actions", icon: "build" },
-    { key: "entity", label: "Entities", icon: "hub" },
-  ];
-  const STRUCTURAL = new Set(["conversation", "user", "assistant", "system", "thought", "tool_call", "tool_arg", "tool_result", "tool_hub"]);
 
   const S = {
     data: null,
@@ -64,9 +57,12 @@
     clusters: new Map(),
     posCache: {},
   };
-  const SEV_ORDER = ["info", "low", "medium", "high", "critical"];
-  const sevRank = (s) => SEV_ORDER.indexOf(s);
-  const SEV_COLOR = { critical: "#A50E0E", high: "#D93025", medium: "#E37400", low: "#B08800", info: "#5F6368" };
+  // lookups and analyst tags / comments, shared with the Nodes and Timeline pages
+  const M = SS.model(S, {
+    onSaved: () => { afterAnnotationChange(); broadcast({ type: "annotations" }); },
+    promptTag: async () => (prompt("New tag name") || "").trim().toLowerCase() || null, // the server adds unknown tags
+  });
+  const { kind, kindOf, convMatchesFilter, convVisible, targetOf, annOf, tagsFor, tagInfo, nodeTags, loadAnnotations, tagChipsHTML, openTagMenu } = M;
   const chan = "BroadcastChannel" in window ? new BroadcastChannel("synthsift") : null;
   const WIN_ID = Math.random().toString(36).slice(2);
 
@@ -247,7 +243,7 @@
         bar.classList.toggle("indeterminate", !st.progress);
         bar.querySelector(".bar").style.width = `${Math.round((st.progress || 0) * 100)}%`;
         bar.title = st.message;
-        busyShown = "running";
+        wasBusy = true;
         delay = 500;
       } else {
         bar.classList.add("hidden");
@@ -260,7 +256,7 @@
     }
     polling = setTimeout(pollStatus, delay);
   }
-  let busyShown = "";
+  let wasBusy = false; // a run was seen: announce the new graph when it arrives
 
   async function refresh() {
     let g;
@@ -281,7 +277,7 @@
       if (network) { network.destroy(); network = null; }
       S.data = null;
       renderStats(null);
-      if (busyShown) { $("snackbar").classList.remove("show"); busyShown = ""; }
+      wasBusy = false;
       if (g.warnings && g.warnings.length) renderWarnings(g.warnings);
       return;
     }
@@ -300,8 +296,8 @@
     if (S.search) runSearch(S.search.q, false);
     if (S.selected && S.nodes.has(S.selected)) selectNode(S.selected, { quiet: true });
     else { S.selected = null; renderSelection(); renderPanel(); }
-    if (busyShown) {
-      busyShown = "";
+    if (wasBusy) {
+      wasBusy = false;
       snack(`${plural(g.stats.conversations, "conversation")} · ${fmt(g.stats.nodes)} nodes · ${fmt(g.stats.edges)} edges`, null, 3500);
     } else if (first && g.stats.nodes > 4000) {
       snack("Large graph – raise “Minimum mentions” in Settings for a lighter view.", { label: "Settings", run: () => (location.href = "/settings#graph-content") }, 8000);
@@ -312,10 +308,7 @@
   function ingest(g) {
     S.data = g;
     S.version = g.version;
-    S.kinds.clear();
-    for (const k of [...g.kinds.node_types, ...g.kinds.categories]) {
-      S.kinds.set(k.key, { ...k, color: S.settings["color." + k.key] || k.color });
-    }
+    SS.loadKinds(S.kinds, g, S.settings);
     S.paras.clear(); S.events.clear(); S.convs.clear(); S.convParas.clear(); S.paraPos.clear();
     S.nodes.clear(); S.paraEnts.clear(); S.edgesByNode.clear(); S.textCache.clear();
     S.convOrder = g.conversations.map((c) => c.id);
@@ -342,26 +335,6 @@
       }
     }
   }
-
-  const kindKey = (n) => (n.type === "entity" ? n.category : n.type);
-  // categories invented in a custom vocabulary (Settings → Modules → spaCy NLP) get a stable colour of their own
-  const EXTRA_COLORS = ["#7B1FA2", "#00897B", "#C0CA33", "#6D4C41", "#3949AB", "#D81B60", "#00ACC1", "#F4511E"];
-  function customKind(key) {
-    let h = 0;
-    for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    const k = { key, label: key.replace(/_/g, " "), group: "Custom", icon: "label", color: EXTRA_COLORS[h % EXTRA_COLORS.length] };
-    S.kinds.set(key, k);
-    return k;
-  }
-  const kindOf = (n) => S.kinds.get(kindKey(n)) || customKind(kindKey(n));
-  function convMatchesFilter(cid) {
-    const c = S.convs.get(cid);
-    if (!c) return false;
-    const f = S.filter;
-    return (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness)
-      && (!f.conv || c.id === f.conv);
-  }
-  const convVisible = (c) => !S.hiddenConvs.has(c) && convMatchesFilter(c);
 
   /* =========================================================== filters */
   function computeVisible() {
@@ -1011,11 +984,7 @@
     if (settle && (S.clusters.size || S.justUnclustered)) settleLayout();
     S.justUnclustered = false;
   }
-  function hashColor(key) {
-    let h = 0;
-    for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    return ["#1A73E8", "#D93025", "#188038", "#9334E6", "#E8710A", "#129EAF", "#E52592", "#185ABC", "#B06000", "#137333"][h % 10];
-  }
+  const hashColor = (key) => ["#1A73E8", "#D93025", "#188038", "#9334E6", "#E8710A", "#129EAF", "#E52592", "#185ABC", "#B06000", "#137333"][SS.strHash(key) % 10];
   // open the cluster a node is hidden in, so it can be selected / focused
   function revealNode(id) {
     if (!network) return;
@@ -1090,11 +1059,8 @@
     else if (c.mode === "user") Object.assign(f, { user: c.key, harness: "", conv: "" });
     else if (c.mode === "agent") Object.assign(f, { harness: c.key, conv: "" });
     else f.conv = c.key;
-    S.filter = f;
-    store.set("convFilter", S.filter);
     if (c.mode === "conversation") S.currentConv = c.key;
-    renderFilters();
-    afterConvToggle();
+    setConvFilter(f);
     snack(`Filtered to ${c.mode} “${c.label}”`, { label: "Undo", run: () => clearClusterFocus(c.mode) }, 5000);
   }
   function clearClusterFocus(mode) {
@@ -1103,10 +1069,7 @@
     else if (mode === "user") f.user = "";
     else if (mode === "agent") f.harness = "";
     f.conv = "";
-    S.filter = f;
-    store.set("convFilter", S.filter);
-    renderFilters();
-    afterConvToggle();
+    setConvFilter(f);
   }
   function clusterTip(id) {
     const c = S.clusters.get(id);
@@ -1219,9 +1182,7 @@
     if (quiet) { renderPanel(); return; }
     broadcast({ type: "select", id });
     if (eventsHit.size <= 1 && occ.length) {
-      const pid = occ[0][0];
-      S.currentConv = S.paras.get(pid).c;
-      setTab("transcript", { scrollTo: pid });
+      showPara(occ[0][0]);
     } else {
       setTab(occ.length ? "matches" : "transcript");
     }
@@ -1282,23 +1243,14 @@
     // tags as one-click toggles + a comment box
     const target = targetOf(n.id);
     if (target) {
-      const cur = new Set(tagsFor(target));
-      const chips = el("div", { class: "chip-row sel-tags" }, S.tags.map((t) => el("button", {
-        class: `chip sm${cur.has(t.name) ? " on" : ""}`, style: { "--tag": t.color }, title: `Tag as ${t.name}`,
-        role: "checkbox", "aria-checked": cur.has(t.name) ? "true" : "false",
-        onclick: () => toggleTag(target, t.name),
-      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), t.name)),
-        el("button", { class: "chip sm", title: "More tags / new tag", onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); openTagMenu(target, r.left, r.bottom + 4); } }, icon("more_horiz"), "More"));
-      const ta = el("textarea", { class: "text-input sel-comment", placeholder: "Analyst comment (saved when you leave the box)…" });
-      ta.value = (annOf(target) || {}).comment || "";
-      ta.addEventListener("change", () => saveAnnotation(target, [...tagsFor(target)], ta.value));
-      body.append(chips, ta);
+      body.append(...M.tagEditor(target, el("button", { class: "chip sm", title: "More tags / new tag",
+        onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); openTagMenu(target, r.left, r.bottom + 4); } }, icon("more_horiz"), "More"), { titles: true }));
     }
     box.replaceChildren(
       el("span", { class: "ico", style: { background: n.type === "conversation" && convs[0] ? convs[0].color : k.color } }, icon(k.icon)),
       body,
       el("div", {},
-        el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => network && network.focus(n.id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } }) }, icon("center_focus_strong", "sm")),
+        el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => focusNode(n.id) }, icon("center_focus_strong", "sm")),
         el("a", { class: "icon-btn sm", title: "Open in the Nodes table", href: `/nodes?select=${encodeURIComponent(n.id)}`, target: "synthsift-nodes" }, icon("table_rows", "sm")),
         el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
     box.classList.remove("hidden");
@@ -1371,17 +1323,6 @@
     return `<div class="${cls.join(" ")}" id="p-${esc(p.id)}" data-pid="${esc(p.id)}">${html}</div>`;
   }
 
-  const ROLE_ICON = { user: "person", assistant: "smart_toy", system: "settings", thought: "psychology", tool_call: "build", tool_result: "output" };
-  function roleColor(type) { return (S.kinds.get(type) || {}).color || "#80868b"; }
-  function avatar(type) {
-    return `<span class="avatar" style="background:${roleColor(type)}"><span class="msi">${ROLE_ICON[type] || "chat"}</span></span>`;
-  }
-  function fmtTime(ts) {
-    if (!ts) return "";
-    const d = new Date(ts);
-    return isNaN(d) ? esc(ts) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  }
-
   function convPicker() {
     const sel = el("select", { class: "select", "aria-label": "Conversation" });
     const groups = new Map();
@@ -1427,14 +1368,14 @@
       const tags = tagsFor(evTarget);
       const ann = annOf(evTarget);
       const fsEv = findingsForEvent(ev.id);
-      const worst = fsEv.reduce((a, f) => (sevRank(f.severity) > sevRank(a) ? f.severity : a), "");
+      const worst = SS.worstSeverity(fsEv);
       const tagCls = tags.includes("bad") ? " tagged-bad" : tags.includes("suspicious") ? " tagged-suspicious" : "";
       const cls = `msg ${ev.type}${ev.error ? " error" : ""}${long && !hasMark ? " collapsed" : ""}${tagCls}`;
-      html += `<div class="${cls}" data-event="${esc(ev.id)}" style="--tagc:${tags.length ? esc(tagInfo(tags[0]).color) : "transparent"}"><div class="msg-head">${avatar(ev.type)}<span class="who">${esc(ev.label)}</span>` +
+      html += `<div class="${cls}" data-event="${esc(ev.id)}" style="--tagc:${tags.length ? esc(tagInfo(tags[0]).color) : "transparent"}"><div class="msg-head">${M.avatarHTML(ev.type)}<span class="who">${esc(ev.label)}</span>` +
         (worst ? `<span class="sev-chip sev-${worst}" title="${esc(fsEv.map((f) => f.label).join("; "))}">${worst}</span>` : "") +
         `<span class="tag-row">${tagChipsHTML(tags)}</span>` +
         (ev.call_id ? `<span class="tag mono">${esc(ev.call_id)}</span>` : "") +
-        `<span class="ts">${fmtTime(ev.ts)}</span>` +
+        `<span class="ts">${esc(fmtTime(ev.ts))}</span>` +
         `<button class="icon-btn sm tagbtn${tags.length || (ann && ann.comment) ? " has" : ""}" data-tagmenu="${esc(evTarget)}" title="Tag or comment on this turn (or right-click it)"><span class="msi xs">sell</span></button>` +
         `<button class="icon-btn sm inspect" data-inspect="${esc(ev.id)}" title="What the enrichment modules extracted from this turn"><span class="msi xs">data_object</span></button>` +
         `<button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button></div>` +
@@ -1509,7 +1450,7 @@
           const p = S.paras.get(list[i]);
           if (p.e !== lastEvent) {
             const e = S.events.get(p.e);
-            html += `<div class="role">${avatar(e.type)}${esc(e.label)}<span class="muted" style="margin-left:auto">${fmtTime(e.ts)}</span></div>`;
+            html += `<div class="role">${M.avatarHTML(e.type)}${esc(e.label)}<span class="muted" style="margin-left:auto">${esc(fmtTime(e.ts))}</span></div>`;
             lastEvent = p.e;
           }
           const isHit = w.hits.includes(i);
@@ -1538,22 +1479,6 @@
       convVisible(f.conv) && sevRank(f.severity) >= min && (!S.secCats.size || S.secCats.has(f.category)) &&
       !(S.hideIgnored && (ignored("event:" + f.event) || ignored("conv:" + f.conv))));
   }
-  function endpointLabel(key) {
-    const n = S.nodes.get("ent:" + key);
-    if (n) return n.label;
-    const ev = S.events.get(key);
-    return ev ? ev.label : key;
-  }
-  function chainEl(chain) {
-    const box = el("div", { class: "chain" });
-    chain.forEach(([src, action, dst], i) => {
-      if (i === 0) box.append(el("span", { class: "node", title: endpointLabel(src) }, endpointLabel(src)));
-      box.append(el("span", { class: "arrow" }, action, icon("arrow_forward")));
-      box.append(el("span", { class: "node", title: endpointLabel(dst) }, endpointLabel(dst)));
-    });
-    return box;
-  }
-
   function renderSecurity() {
     const body = $("panel-body");
     body.scrollTop = 0;
@@ -1586,19 +1511,10 @@
     frag.append(toolbar);
     for (const f of shown.slice(0, 500)) {
       const c = S.convs.get(f.conv);
-      const ev = S.events.get(f.event);
-      const tags = tagsFor("event:" + f.event);
-      const row = el("div", { class: `finding sev-${f.severity}`, "data-finding": f.i, title: "Click to open · right-click to tag" },
-        el("span", { class: "sev-chip" }, f.severity),
-        el("span", { class: "f-title" }, f.label, el("span", { class: "muted" }, " · " + (cats[f.category] || f.category))),
-        el("span", { class: "f-detail" }, f.detail),
-        f.chain.length ? chainEl(f.chain) : null,
-        el("div", { class: "f-meta" },
-          c ? el("span", { class: "dot", style: { width: "8px", height: "8px", borderRadius: "50%", background: c.color, display: "inline-block" } }) : null,
-          c ? `${c.host} / ${c.user} · ${c.title}` : f.conv,
-          ev ? ` · ${ev.label}` : "", ev && ev.ts ? ` · ${fmtTime(ev.ts)}` : "",
-          el("span", { class: "tag-row", html: tagChipsHTML(tags) })));
-      frag.append(row);
+      frag.append(M.findingCard(f, { "data-finding": f.i, title: "Click to open · right-click to tag" },
+        el("span", { class: "muted" }, " · " + (cats[f.category] || f.category)),
+        [c ? el("span", { class: "dot", style: { width: "8px", height: "8px", borderRadius: "50%", background: c.color, display: "inline-block" } }) : null,
+          ...M.findingWhere(f, f.conv), el("span", { class: "tag-row", html: tagChipsHTML(tagsFor("event:" + f.event)) })]));
     }
     if (shown.length > 500) frag.append(el("div", { class: "more-note" }, `Showing 500 of ${fmt(shown.length)} findings`));
     body.replaceChildren(frag);
@@ -1612,6 +1528,12 @@
   }
 
   /* ========================================================= navigation */
+  const focusNode = (id) => network && network.focus(id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } });
+  function showPara(pid) {
+    S.currentConv = S.paras.get(pid).c;
+    setTab("transcript", { scrollTo: pid });
+  }
+
   // show a node / turn / conversation handed over by another page (or ?select=&para=)
   function reveal(id, para) {
     if (!S.data) return;
@@ -1623,10 +1545,7 @@
     if (cids.length && !cids.some(convVisible)) {
       const cid = cids[0];
       S.hiddenConvs.delete(cid);
-      if (!convMatchesFilter(cid)) S.filter = { host: "", user: "", harness: "", conv: "" };
-      store.set("convFilter", S.filter);
-      renderFilters();
-      afterConvToggle();
+      setConvFilter(convMatchesFilter(cid) ? S.filter : { host: "", user: "", harness: "", conv: "" });
     }
     if (n && (S.hiddenLayers.has(n.layer) || S.hiddenKinds.has(kindKey(n)))) {
       S.hiddenLayers.delete(n.layer);
@@ -1635,10 +1554,10 @@
     }
     if (n) {
       selectNode(id, { focus: true });
-      if (para && S.paras.has(para)) { S.currentConv = S.paras.get(para).c; setTab("transcript", { scrollTo: para }); }
+      if (para && S.paras.has(para)) showPara(para);
     } else if (id && id.startsWith("conv:")) jumpToTarget(id);
     else if (id && S.events.has(id)) jumpToEvent(id);
-    else if (para && S.paras.has(para)) { S.currentConv = S.paras.get(para).c; setTab("transcript", { scrollTo: para }); }
+    else if (para && S.paras.has(para)) showPara(para);
     else snack("That item is not in the current graph (filtered or below the minimum mentions).");
   }
 
@@ -1649,7 +1568,7 @@
     S.currentConv = ev.c;
     if (S.nodes.has(evId) && S.visibleNodes.has(evId)) {
       selectNode(evId, { quiet: true });
-      network && network.focus(evId, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } });
+      focusNode(evId);
     }
     setTab("transcript", { scrollTo: ev.p[0] });
     broadcast({ type: "select", id: evId });
@@ -1683,18 +1602,13 @@
       return;
     }
     const open = t.closest("[data-open]");
-    if (open) {
-      const pid = open.dataset.open;
-      S.currentConv = S.paras.get(pid).c;
-      setTab("transcript", { scrollTo: pid });
-      return;
-    }
+    if (open) { showPara(open.dataset.open); return; }
     const jump = t.closest("[data-jump]");
     if (jump) {
       const id = jump.dataset.jump;
       if (S.visibleNodes.has(id)) {
         selectNode(id, { quiet: true });
-        network && network.focus(id, { scale: Math.max(1, network.getScale()), animation: { duration: 450 } });
+        focusNode(id);
         broadcast({ type: "select", id });
       } else snack("That node is hidden by the current filters.");
       return;
@@ -1720,149 +1634,13 @@
   }
 
   /* ======================================================= annotations */
-  // Analyst tags / comments. Targets: "conv:<cid>", "event:<event id>", "term:<entity node id>".
-  function targetOf(nodeId) {
-    const n = S.nodes.get(nodeId);
-    if (!n) return null;
-    if (n.type === "conversation") return nodeId;
-    if (n.type === "entity") return "term:" + nodeId;
-    if (n.type === "tool_arg") return "event:" + n.event;
-    if (n.type === "tool_hub") return null;
-    return "event:" + nodeId;
-  }
-  function nodeOfTarget(target) {
-    if (!target) return null;
-    if (target.startsWith("conv:")) return target;
-    if (target.startsWith("event:")) return target.slice(6);
-    if (target.startsWith("term:")) return target.slice(5);
-    return null;
-  }
-  const annOf = (target) => (target && S.annotations[target]) || null;
-  const tagsFor = (target) => (annOf(target) || {}).tags || [];
-  const tagInfo = (name) => S.tags.find((t) => t.name === name) || { name, color: "#5F6368", icon: "sell" };
-
-  // tags that apply to a graph node: its own, plus its conversation's for structural nodes
-  function nodeTags(nodeId) {
-    const own = tagsFor(targetOf(nodeId));
-    const n = S.nodes.get(nodeId);
-    if (n && n.type !== "entity" && n.type !== "conversation" && n.conv && n.conv[0]) {
-      const ct = tagsFor("conv:" + n.conv[0]);
-      if (ct.length) return [...new Set([...own, ...ct])];
-    }
-    return own;
-  }
-
-  function labelFor(target) {
-    const id = nodeOfTarget(target);
-    if (target.startsWith("conv:")) { const c = S.convs.get(target.slice(5)); return c ? c.title : target; }
-    if (target.startsWith("event:")) {
-      const ev = S.events.get(id);
-      if (!ev) return id;
-      const first = ev.p.length ? S.paras.get(ev.p[0]).t.replace(/\s+/g, " ").slice(0, 90) : "";
-      return `${ev.label}${first ? " – " + first : ""}`;
-    }
-    const n = S.nodes.get(id);
-    return n ? n.label : id.replace(/^ent:/, "");
-  }
-  function convFor(target) {
-    if (target.startsWith("conv:")) return target.slice(5);
-    if (target.startsWith("event:")) { const ev = S.events.get(target.slice(6)); return ev ? ev.c : null; }
-    const n = S.nodes.get(target.slice(5));
-    return n && n.conv && n.conv.length ? n.conv[0] : null;
-  }
-  function tsFor(target) {
-    if (target.startsWith("conv:")) { const c = S.convs.get(target.slice(5)); return c ? c.started_at || null : null; }
-    if (target.startsWith("event:")) { const ev = S.events.get(target.slice(6)); return ev ? ev.ts || null : null; }
-    const n = S.nodes.get(target.slice(5));
-    let best = null;
-    for (const [pid] of (n && n.occ) || []) {
-      const ts = S.events.get(S.paras.get(pid)?.e)?.ts;
-      if (ts && (!best || ts < best)) best = ts;
-    }
-    return best;
-  }
-
-  async function loadAnnotations() {
-    try {
-      const r = await api("/api/annotations");
-      S.annotations = r.annotations || {};
-      S.tags = r.tags || [];
-    } catch (e) { /* keep previous */ }
-  }
-
-  async function saveAnnotation(target, tags, comment) {
-    const prev = annOf(target);
-    const body = { target, tags, comment: comment ?? (prev ? prev.comment : ""), label: labelFor(target),
-      conv: convFor(target), ts: tsFor(target) };
-    try {
-      const r = await api("/api/annotations", { method: "PUT", body });
-      if (r.annotation) S.annotations[target] = r.annotation; else delete S.annotations[target];
-      S.tags = r.tags || S.tags;
-      afterAnnotationChange();
-      broadcast({ type: "annotations" });
-    } catch (e) {
-      snack("Could not save: " + e.message);
-    }
-  }
-  function toggleTag(target, tag) {
-    const cur = new Set(tagsFor(target));
-    cur.has(tag) ? cur.delete(tag) : cur.add(tag);
-    return saveAnnotation(target, [...cur]);
-  }
-
+  // Analyst tags / comments (see SS.model). Targets: "conv:<cid>", "event:<event id>", "term:<entity node id>".
   function afterAnnotationChange() {
     applyFilters();
     renderTagChips();
     renderSelection();
     network && network.redraw();
     renderPanel({ keepScroll: true });
-  }
-
-  function tagChipsHTML(tags) {
-    return tags.map((t) => { const i = tagInfo(t); return `<span class="tag-chip" style="--tag:${esc(i.color)}">${esc(t)}</span>`; }).join("");
-  }
-
-  function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
-
-  function placeMenu(menu, x, y) {
-    document.body.append(menu);
-    const w = menu.offsetWidth, h = menu.offsetHeight;
-    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
-    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
-    setTimeout(() => {
-      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close, true); } };
-      document.addEventListener("mousedown", close, true);
-    }, 0);
-  }
-
-  const KIND_LABEL = { conv: "Session", event: "Turn", term: "Term" };
-  function openTagMenu(target, x, y) {
-    if (!target) return;
-    closeMenus();
-    const kind = target.split(":", 1)[0];
-    const menu = el("div", { class: "menu tag-menu", role: "menu" });
-    const render = () => {
-      const cur = new Set(tagsFor(target));
-      const a = annOf(target);
-      const head = el("div", { class: "tm-head" }, `Tag ${KIND_LABEL[kind] || kind}`, el("b", { title: labelFor(target) }, labelFor(target)));
-      const items = S.tags.map((t) => el("button", {
-        role: "menuitemcheckbox", "aria-checked": cur.has(t.name) ? "true" : "false",
-        onclick: async () => { await toggleTag(target, t.name); render(); },
-      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
-        el("span", { class: "grow" }, t.name)));
-      const newTag = el("button", { onclick: async () => {
-        const name = (prompt("New tag name") || "").trim();
-        if (name) { await toggleTag(target, name.toLowerCase()); render(); }
-      } }, icon("add"), el("span", { class: "grow" }, "New tag…"));
-      const ta = el("textarea", { class: "text-input", placeholder: "Analyst comment…" });
-      ta.value = a ? a.comment : "";
-      const comment = el("div", { class: "tm-comment" }, ta, el("div", { class: "tm-actions" },
-        el("button", { class: "btn text sm", onclick: async () => { await saveAnnotation(target, [], ""); menu.remove(); } }, "Clear all"),
-        el("button", { class: "btn filled sm", onclick: async () => { await saveAnnotation(target, [...tagsFor(target)], ta.value); menu.remove(); snack("Comment saved"); } }, "Save comment")));
-      menu.replaceChildren(head, ...items, newTag, comment);
-    };
-    render();
-    placeMenu(menu, x, y);
   }
 
   function renderTagChips() {
@@ -1896,16 +1674,6 @@
   }
 
   /* ============================================================ search */
-  function makeRegex(q) {
-    const m = q.match(/^\/(.+)\/([a-z]*)$/);
-    try {
-      if (m) return new RegExp(m[1], m[2].includes("g") ? m[2] : m[2] + "g");
-    } catch (e) {
-      return null;
-    }
-    return new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  }
-
   function runSearch(q, switchTab = true) {
     q = q.trim();
     $("q-clear").classList.toggle("hidden", !q);
@@ -1917,7 +1685,7 @@
       renderPanel();
       return;
     }
-    const re = makeRegex(q);
+    const re = makeRegex(q, true);
     if (!re) { $("q-result").textContent = "invalid regex"; return; }
     const occ = [];
     const byPara = new Map();
@@ -1986,7 +1754,7 @@
       const cb = cbIcon(convs);
       const hitTotal = counts ? convs.reduce((a, c) => a + (counts.get(c) || 0), 0) : 0;
       const row = el("div", { class: "tree-row", "data-key": node.key },
-        el("span", { class: "twisty", "data-twisty": node.key }, icon(collapsed ? "chevron_right" : "expand_more", "sm")),
+        el("span", { class: "twisty" }, icon(collapsed ? "chevron_right" : "expand_more", "sm")),
         el("span", { class: `cb${cb !== "check_box_outline_blank" ? " on" : ""}`, "data-toggle": node.key }, icon(cb, "sm")),
         icon(node.icon, "sm kind-icon"),
         el("span", { class: "name", title: node.name }, node.name),
@@ -2027,14 +1795,6 @@
 
   function onTreeClick(ev) {
     const t = ev.target;
-    const tw = t.closest("[data-twisty]");
-    if (tw) {
-      const k = tw.dataset.twisty;
-      S.collapsed.has(k) ? S.collapsed.delete(k) : S.collapsed.add(k);
-      store.set("collapsedTree", [...S.collapsed]);
-      renderTree();
-      return;
-    }
     const tg = t.closest("[data-toggle]");
     if (tg) {
       const node = findNodeByKey(tg.dataset.toggle);
@@ -2059,7 +1819,7 @@
       if (S.hiddenConvs.has(cid)) { S.hiddenConvs.delete(cid); afterConvToggle(); }
       renderTree();
       if (S.convSearch && S.convSearch.q) {
-        const re = makeRegex(S.convSearch.q);
+        const re = makeRegex(S.convSearch.q, true);
         const hit = S.convParas.get(cid).find((pid) => { re.lastIndex = 0; return re.test(S.paras.get(pid).t); });
         runSearch(S.convSearch.q, false);
         $("q").value = S.convSearch.q;
@@ -2068,7 +1828,7 @@
       fitConversation(cid);
       return;
     }
-    const grp = t.closest("[data-key]");
+    const grp = t.closest("[data-key]"); // a group row or its twisty: fold / unfold
     if (grp) {
       const k = grp.dataset.key;
       S.collapsed.has(k) ? S.collapsed.delete(k) : S.collapsed.add(k);
@@ -2077,6 +1837,12 @@
     }
   }
 
+  function setConvFilter(f) {
+    S.filter = f;
+    store.set("convFilter", f);
+    renderFilters();
+    afterConvToggle();
+  }
   function afterConvToggle() {
     broadcast({ type: "filters", hiddenConvs: [...S.hiddenConvs], filter: S.filter });
     applyFilters();
@@ -2116,7 +1882,7 @@
     q = q.trim();
     $("conv-only").classList.toggle("hidden", !q);
     if (!q) { S.convSearch = null; renderTree(); return; }
-    const re = makeRegex(q);
+    const re = makeRegex(q, true);
     if (!re) return;
     const counts = new Map();
     for (const p of S.paras.values()) {
@@ -2141,14 +1907,13 @@
     }
     const groups = new Map();
     for (const [key, n] of counts) {
-      const k = S.kinds.get(key) || customKind(key);
-      const g = STRUCTURAL.has(key) ? "Conversation structure" : k.group || "Other";
+      const k = kind(key);
+      const g = M.kindGroup(key);
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push({ ...k, key, n });
     }
-    const order = ["Conversation structure", "Custom", "Technical", "People & orgs", "Places", "Things", "Time & numbers", "Other"];
     const frag = document.createDocumentFragment();
-    for (const g of [...groups.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b))) {
+    for (const g of [...groups.keys()].sort((a, b) => SS.KIND_GROUPS.indexOf(a) - SS.KIND_GROUPS.indexOf(b))) {
       const items = groups.get(g).sort((a, b) => b.n - a.n);
       const allOn = items.every((i) => !S.hiddenKinds.has(i.key));
       frag.append(el("div", { class: "legend-group" },
@@ -2200,7 +1965,7 @@
     try {
       snack(`Uploading ${plural(zips.length, "file")}…`, null, 0);
       await api("/api/upload", { method: "POST", body: fd });
-      busyShown = "running"; $("snackbar").classList.remove("show");
+      wasBusy = true; $("snackbar").classList.remove("show"); // hide "Uploading…"
       pollStatus();
     } catch (e) {
       snack("Upload failed: " + e.message, null, 8000);
@@ -2208,7 +1973,7 @@
   }
 
   function exportMenu(anchor) {
-    document.querySelectorAll(".menu").forEach((m) => m.remove());
+    closeMenus();
     const convs = S.convOrder.filter(convVisible).join(",");
     const dark = S.theme === "dark";
     const item = (ic, label, sub, run) => el("button", { onclick: () => { menu.remove(); run(); } }, icon(ic), el("span", { class: "grow" }, label, el("div", { class: "sub" }, sub)));
@@ -2221,8 +1986,7 @@
         out.width = canvas.width; out.height = canvas.height;
         const cx = out.getContext("2d");
         cx.fillStyle = GC.surface; cx.fillRect(0, 0, out.width, out.height); cx.drawImage(canvas, 0, 0);
-        const a = el("a", { href: out.toDataURL("image/png"), download: "synthsift-graph.png" });
-        document.body.append(a); a.click(); a.remove();
+        SS.download(out.toDataURL("image/png"), "synthsift-graph.png");
       }));
     const r = anchor.getBoundingClientRect();
     menu.style.top = r.bottom + 4 + "px";
@@ -2283,7 +2047,7 @@
     for (const id of ["btn-upload", "empty-upload"]) $(id).addEventListener("click", () => file.click());
     file.addEventListener("change", () => { upload(file.files); file.value = ""; });
     $("empty-samples").addEventListener("click", async () => {
-      try { await api("/api/samples", { method: "POST" }); busyShown = "running"; pollStatus(); } catch (e) { snack(e.message); }
+      try { await api("/api/samples", { method: "POST" }); wasBusy = true; pollStatus(); } catch (e) { snack(e.message); }
     });
     let dragDepth = 0;
     window.addEventListener("dragenter", (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { dragDepth++; $("drop").classList.add("show"); } });
@@ -2366,13 +2130,10 @@
     // host / user / agent filters
     for (const [key, id] of [["host", "f-host"], ["user", "f-user"], ["harness", "f-harness"]]) {
       $(id).addEventListener("change", (e) => {
-        S.filter = { ...S.filter, [key]: e.target.value };
-        if (key === "host") { S.filter.user = ""; S.filter.harness = ""; }
-        if (key === "user") S.filter.harness = "";
-        S.filter.conv = "";
-        store.set("convFilter", S.filter);
-        renderFilters();
-        afterConvToggle();
+        const f = { ...S.filter, [key]: e.target.value, conv: "" };
+        if (key === "host") { f.user = ""; f.harness = ""; }
+        if (key === "user") f.harness = "";
+        setConvFilter(f);
       });
     }
     // right-click tagging: graph, transcript / matches / findings, conversation tree
@@ -2395,11 +2156,7 @@
       if (row) { e.preventDefault(); openTagMenu("conv:" + row.dataset.conv, e.clientX, e.clientY); }
     });
     $("tag-new").addEventListener("click", async () => {
-      const name = (prompt("New tag name") || "").trim();
-      if (!name) return;
-      const color = ["#1A73E8", "#9334E6", "#12B5CB", "#E52592", "#188038", "#B06000"][S.tags.length % 6];
-      try { const r = await api("/api/tags", { method: "POST", body: { name, color } }); S.tags = r.tags; renderTagChips(); renderSelection(); broadcast({ type: "annotations" }); }
-      catch (err) { snack(err.message); }
+      if (await M.newTag()) { renderTagChips(); renderSelection(); broadcast({ type: "annotations" }); }
     });
     $("tag-clear").addEventListener("click", () => { S.tagFilter.clear(); store.set("tagFilter", []); afterTagFilter(); });
     $("t-flagged").addEventListener("click", () => setFlaggedOnly(!S.flaggedOnly));

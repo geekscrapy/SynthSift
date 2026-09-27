@@ -20,7 +20,7 @@
       <a href="/nodes"><span class="msi">table_rows</span><span>Nodes</span></a>
       <a href="/timeline"><span class="msi">timeline</span><span>Timeline</span></a>
     </nav>
-    <label class="search" id="global-search">
+    <label class="search">
       <span class="msi">search</span>
       <input id="q" type="search" autocomplete="off" spellcheck="false"
              placeholder="Search words, entities, paths, tool arguments…  (/regex/ supported)">
@@ -50,7 +50,7 @@
           <button class="icon-btn sm" id="conv-none" title="Hide all conversations"><span class="msi">check_box_outline_blank</span></button>
           <button class="icon-btn sm" id="conv-expand" title="Expand / collapse all"><span class="msi">unfold_less</span></button>
         </div>
-        <div class="filter-row" id="filter-row">
+        <div class="filter-row">
           <label class="mini-select" title="Filter by host"><span class="msi xs">computer</span><select id="f-host"></select></label>
           <label class="mini-select" title="Filter by user"><span class="msi xs">person</span><select id="f-user"></select></label>
           <label class="mini-select" title="Filter by agent / harness"><span class="msi xs">terminal</span><select id="f-harness"></select></label>
@@ -126,7 +126,7 @@
 
     <div class="splitter" id="splitter" title="Drag to resize"></div>
 
-    <aside class="panel" id="right">
+    <aside class="panel">
       <div class="panel-head">
         <div class="tabs">
           <button class="tab on" data-tab="transcript"><span class="msi sm">forum</span><span class="tab-label">Transcript</span></button>
