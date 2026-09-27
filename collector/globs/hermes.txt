@@ -1,0 +1,22 @@
+# Hermes Agent (Nous Research) – session database
+# Syntax: see claude_code.txt.  state.db is SQLite in WAL mode and is copied
+# with SQLite's backup API.
+# SynthSift's hermes parser is a placeholder: collected files are kept but
+# skipped (with a warning) until it is written.
+
+# $HERMES_HOME replaces ~/.hermes when set
+${HERMES_HOME}/./state.db
+${HERMES_HOME}/./profiles/*/state.db
+${HERMES_HOME}/./sessions/*.jsonl
+
+# macOS / Linux / WSL2
+~/.hermes/./state.db
+~/.hermes/./profiles/*/state.db
+
+# Messages appended while the database was being replaced
+~/.hermes/./sessions/*.jsonl
+~/.hermes/./profiles/*/sessions/*.jsonl
+
+# Native Windows install (%LOCALAPPDATA%\hermes)
+${LOCALAPPDATA}/hermes/./state.db
+${LOCALAPPDATA}/hermes/./profiles/*/state.db

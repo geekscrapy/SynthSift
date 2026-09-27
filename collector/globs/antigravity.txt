@@ -1,0 +1,16 @@
+# Google Antigravity – agent conversations
+# Syntax: see claude_code.txt.
+#
+# Google does not document where the Antigravity IDE stores conversations, so
+# nothing is collected by default.  SynthSift's antigravity parser is a
+# placeholder.
+#
+# Documented capture: headless runs print the whole run as NDJSON
+#   agy -p "…" --output-format stream-json > ~/antigravity-runs/run-001.jsonl
+# Keep such runs in one folder and list it here, e.g.:
+# ~/antigravity-runs/./*.jsonl
+#
+# Unverified locations reported by users (not documented by Google) – the
+# conversation files there are binary.  Uncomment to preserve them as evidence:
+# ~/.gemini/antigravity/./conversations/*
+# ~/.gemini/antigravity/./brain/**/*

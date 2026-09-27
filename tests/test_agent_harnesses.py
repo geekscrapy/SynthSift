@@ -1,4 +1,4 @@
-"""Claude Code and OpenClaw parsers, the ingest paths they use, and `synthsift collect`."""
+"""Claude Code and OpenClaw parsers and the ingest paths they use."""
 
 import io
 import json
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import zstandard
 
-from synthsift.collect import discover, write_zip
 from synthsift.harnesses import sniff_parser
 from synthsift.harnesses.claude_code import ClaudeCodeParser
 from synthsift.harnesses.openclaw import OpenClawParser
@@ -285,42 +284,3 @@ def test_security_findings_on_agent_samples(sample_workspace):
     harness = {c.id: c.harness for c in ws.conversations}
     got = {(harness[f.conv], f.rule) for f in ws.findings if harness[f.conv] != "example"}
     assert {("claude_code", "sensitive_path"), ("claude_code", "exfiltration"), ("openclaw", "exfiltration")} <= got
-
-
-# ---------------------------------------------------------------------- collect
-def test_collect_builds_the_upload_layout(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    proj = home / ".claude" / "projects" / "-home-alice-proj"
-    (proj / "s-1" / "subagents").mkdir(parents=True)
-    (proj / "s-1.jsonl").write_bytes(cc_jsonl(CC_ROWS))
-    (proj / "s-1" / "subagents" / "agent-a7.jsonl").write_bytes(cc_jsonl(CC_ROWS[1:3]))
-    agent = home / ".openclaw" / "agents" / "work"
-    (agent / "agent").mkdir(parents=True)
-    (agent / "sessions" / "cold").mkdir(parents=True)
-    make_db(agent / "agent" / "openclaw-agent.sqlite", wal=True)  # left open, like a running gateway
-    (agent / "sessions" / "old.jsonl").write_bytes(jsonl(oc_events()))
-    (agent / "sessions" / "sessions.json").write_text("{}")
-    (agent / "sessions" / "cold" / "x.jsonl.zst").write_bytes(zstandard.ZstdCompressor().compress(jsonl(oc_events())))
-    monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    monkeypatch.delenv("OPENCLAW_STATE_DIR", raising=False)
-    monkeypatch.setattr("getpass.getuser", lambda: "alice")
-
-    found = discover()
-    kinds = sorted((f.harness, f.kind, f.arcpath) for f in found)
-    assert kinds == [
-        ("claude_code", "session", "-home-alice-proj/s-1.jsonl"),
-        ("claude_code", "subagent", "-home-alice-proj/s-1/subagents/agent-a7.jsonl"),
-        ("openclaw", "archive", "agents/work/sessions/cold/x.jsonl.zst"),
-        ("openclaw", "database", "agents/work/agent/openclaw-agent.sqlite"),
-        ("openclaw", "legacy", "agents/work/sessions/old.jsonl"),
-    ]
-    out = tmp_path / "c.zip"
-    rep = write_zip(found, out, "laptop")
-    assert len(rep.files) == 5 and not rep.skipped
-    ingested = read_zip(out.read_bytes(), "c")
-    assert not ingested.warnings
-    assert {(c.host, c.user, c.harness) for c in ingested.conversations} == {("laptop", "alice", "claude_code"),
-                                                                              ("laptop", "alice", "openclaw")}
-    # the database snapshot includes rows that were still only in the write-ahead log
-    assert sum(1 for c in ingested.conversations if c.meta.get("channel") == "telegram") == 1

@@ -8,7 +8,8 @@ Where to find them, per agent (``$OPENCLAW_STATE_DIR`` moves ``~/.openclaw``)::
     ~/.openclaw/agents/<agentId>/sessions/*.jsonl.reset.<ts>[.zst]
     ~/.openclaw/agents/<agentId>/sessions/cold/*.jsonl.zst      cold storage
 
-``synthsift collect`` packs all of these into an upload zip.
+``collector/synthsift_collect.py`` packs all of these into an upload zip (glob
+list: ``collector/globs/openclaw.txt``).
 
 Every source holds the same append-only event stream:
 

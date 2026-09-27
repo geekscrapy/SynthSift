@@ -5,8 +5,8 @@ Where to find them::
     ~/.claude/projects/<escaped-project-path>/<session-uuid>.jsonl
     ~/.claude/projects/<escaped-project-path>/<session-uuid>/subagents/agent-<id>.jsonl
 
-(``$CLAUDE_CONFIG_DIR`` moves ``~/.claude``.)  ``synthsift collect`` packs them
-into an upload zip for you.
+(``$CLAUDE_CONFIG_DIR`` moves ``~/.claude``.)  ``collector/synthsift_collect.py``
+packs them into an upload zip (glob list: ``collector/globs/claude_code.txt``).
 
 Format (JSONL, one row per line, append-only):
 

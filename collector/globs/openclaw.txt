@@ -1,0 +1,29 @@
+# OpenClaw (formerly Clawdbot / Moltbot) – agent sessions
+# Syntax: see claude_code.txt.  SQLite databases are copied with SQLite's
+# backup API, so a live gateway's database is captured consistently.
+
+# $OPENCLAW_STATE_DIR replaces ~/.openclaw when set
+${OPENCLAW_STATE_DIR}/./agents/*/agent/openclaw-agent.sqlite
+${OPENCLAW_STATE_DIR}/./agents/*/sessions/*.jsonl*
+${OPENCLAW_STATE_DIR}/./agents/*/sessions/cold/*.jsonl.zst
+
+# Current releases: one database per agent with every session and the
+# archives of deleted / reset sessions
+~/.openclaw/./agents/*/agent/openclaw-agent.sqlite
+
+# Older, file-backed releases, plus deleted / reset archives
+#   <session-id>.jsonl, <session-id>.jsonl.deleted.<time>[.zst], <session-id>.jsonl.reset.<time>[.zst]
+~/.openclaw/./agents/*/sessions/*.jsonl*
+~/.openclaw/./sessions/*.jsonl*
+
+# Cold storage (session.maintenance.coldStorage)
+~/.openclaw/./agents/*/sessions/cold/*.jsonl.zst
+
+# Installs from before the renames
+~/.clawdbot/./agents/*/agent/openclaw-agent.sqlite
+~/.clawdbot/./agents/*/sessions/*.jsonl*
+~/.moltbot/./agents/*/agent/openclaw-agent.sqlite
+~/.moltbot/./agents/*/sessions/*.jsonl*
+
+# Write-lock files sit next to transcripts
+!*.lock
