@@ -14,7 +14,6 @@ from synthsift.harnesses.openclaw import OpenClawParser
 from synthsift.ingest import read_zip
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLES = ROOT / "samples" / "transcripts"
 
 
 # ----------------------------------------------------------------- Claude Code

@@ -36,8 +36,6 @@ class HarnessParser(ABC):
     label: ClassVar[str] = ""
     #: other folder names that should route to this parser
     aliases: ClassVar[tuple[str, ...]] = ()
-    #: file extensions this parser accepts
-    extensions: ClassVar[tuple[str, ...]] = (".json", ".jsonl")
     #: False for placeholder shells
     implemented: ClassVar[bool] = True
     #: one-line description of the on-disk format
@@ -65,17 +63,11 @@ class HarnessParser(ABC):
     # ---- helpers shared by parsers -------------------------------------
     @staticmethod
     def load_json(raw: bytes) -> Any:
-        text = raw.decode("utf-8-sig", errors="replace")
-        return json.loads(text)
+        return json.loads(raw.decode("utf-8-sig", errors="replace"))
 
     @staticmethod
     def load_jsonl(raw: bytes) -> list[Any]:
-        rows = []
-        for line in raw.decode("utf-8-sig", errors="replace").splitlines():
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-        return rows
+        return [json.loads(line) for line in raw.decode("utf-8-sig", errors="replace").splitlines() if line.strip()]
 
     @staticmethod
     def read_jsonl(raw: bytes) -> tuple[list[Any], int]:

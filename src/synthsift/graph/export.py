@@ -59,13 +59,17 @@ def to_pyvis_html(G: nx.MultiDiGraph, paragraphs: dict[str, Any] | None = None, 
     return net.generate_html(notebook=False)
 
 
+def _graphml_value(v: Any) -> Any:
+    """GraphML attributes are scalars: lists and dicts go in as JSON."""
+    return v if isinstance(v, (str, int, float, bool)) else json.dumps(v)
+
+
 def to_graphml(G: nx.MultiDiGraph) -> bytes:
     H = nx.MultiDiGraph()
     for nid, d in G.nodes(data=True):
-        H.add_node(nid, **{k: (v if isinstance(v, (str, int, float, bool)) else json.dumps(v))
-                           for k, v in d.items() if k != "occ"})
+        H.add_node(nid, **{k: _graphml_value(v) for k, v in d.items() if k != "occ"})
     for u, v, k, d in G.edges(keys=True, data=True):
-        H.add_edge(u, v, key=k, **{a: (b if isinstance(b, (str, int, float, bool)) else json.dumps(b)) for a, b in d.items()})
+        H.add_edge(u, v, key=k, **{a: _graphml_value(b) for a, b in d.items()})
     buf = io.BytesIO()
     nx.write_graphml(H, buf)
     return buf.getvalue()

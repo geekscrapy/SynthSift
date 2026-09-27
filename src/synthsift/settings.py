@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .categories import CATEGORIES, NODE_TYPES
-from .fields import Field  # noqa: F401  (re-exported)
+from .fields import Field
 
 S_SOURCES = "Text sources"
 S_PROCESSING = "Processing"

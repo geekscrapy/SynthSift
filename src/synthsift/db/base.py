@@ -68,8 +68,6 @@ class Batch:
 class Storage(ABC):
     """What SynthSift needs from a database."""
 
-    backend: str = ""
-
     # ------------------------------------------------------------ schema
     @abstractmethod
     def ensure(self, tbl: Table) -> None:

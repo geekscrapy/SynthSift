@@ -40,9 +40,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 import sqlite3
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -201,7 +201,6 @@ class OpenClawParser(HarnessParser):
     name = "openclaw"
     label = "OpenClaw"
     aliases = ("open-claw", "open_claw", "clawdbot", "moltbot", ".openclaw", ".clawdbot", ".moltbot")
-    extensions = (".jsonl", ".json", ".zst", ".sqlite", ".db")
     description = "OpenClaw agent sessions: per-agent openclaw-agent.sqlite, legacy sessions/*.jsonl and archives."
 
     def sniff(self, raw: bytes, filename: str) -> float:
@@ -221,7 +220,7 @@ class OpenClawParser(HarnessParser):
 
     def parse(self, raw: bytes, filename: str) -> list[Conversation]:
         if raw[:16] == SQLITE_MAGIC:
-            return self.parse_sqlite(raw, filename)
+            return self.parse_sqlite(raw)
         raw, inner = self.decompress(raw, filename)
         text = raw.decode("utf-8-sig", errors="replace").lstrip()
         if text.startswith("{") and "\n" in text.rstrip() and not text.split("\n", 1)[1].lstrip().startswith("{"):
@@ -239,7 +238,7 @@ class OpenClawParser(HarnessParser):
         return [conv] if conv else []
 
     # --------------------------------------------------------------- SQLite
-    def parse_sqlite(self, raw: bytes, filename: str) -> list[Conversation]:
+    def parse_sqlite(self, raw: bytes) -> list[Conversation]:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "agent.sqlite"
             path.write_bytes(raw)
@@ -248,11 +247,11 @@ class OpenClawParser(HarnessParser):
                 Path(f"{path}-wal").write_bytes(self.companions["-wal"])
             con = sqlite3.connect(path)
             try:
-                return self._read_db(con, filename)
+                return self._read_db(con)
             finally:
                 con.close()
 
-    def _read_db(self, con: sqlite3.Connection, filename: str) -> list[Conversation]:
+    def _read_db(self, con: sqlite3.Connection) -> list[Conversation]:
         con.row_factory = sqlite3.Row
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         if "transcript_events" not in tables:

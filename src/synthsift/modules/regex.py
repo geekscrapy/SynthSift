@@ -42,6 +42,6 @@ class RegexModule(Module):
                 continue
             text = analysed_text(p.text, p.role)
             for i, m in enumerate(find_all(text, self.defs)):
-                rows.append((p.hash, m.start, m.end, text[m.start:m.end], m.category, m.source, None, bool(m.literal),
+                rows.append((p.hash, m.start, m.end, m.text, m.category, m.source, None, bool(m.literal),
                              PRIORITY, i, None, None, None))
         return {"x_regex": rows}

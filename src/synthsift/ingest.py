@@ -7,6 +7,7 @@ import hashlib
 import io
 import re
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -72,7 +73,7 @@ def conv_id(dataset: str, path: str, index: int) -> str:
 
 def read_zip(data: bytes, dataset: str) -> IngestReport:
     report = IngestReport()
-    not_implemented: dict[str, int] = {}
+    not_implemented: Counter[str] = Counter()
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -102,7 +103,7 @@ def read_zip(data: bytes, dataset: str) -> IngestReport:
             try:
                 convs = parser.parse(raw, filename)
             except ParserNotImplemented:
-                not_implemented[parser_cls.name] = not_implemented.get(parser_cls.name, 0) + 1
+                not_implemented[parser_cls.name] += 1
                 continue
             except Exception as exc:  # noqa: BLE001 - report per file, keep going
                 report.warnings.append(f"{name}: {parser_cls.name} parser failed: {type(exc).__name__}: {exc}")

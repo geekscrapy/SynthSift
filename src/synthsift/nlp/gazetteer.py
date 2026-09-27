@@ -85,7 +85,7 @@ CASED: dict[str, list[str]] = {
     "vehicle": ["Model S", "Model X", "Leaf", "Golf", "Beetle", "Accord", "Camry", "Prius", "Corolla", "Civic", "Mustang"],
 }
 # "Go", "R", "C", "Edge" are too ambiguous even capitalised at sentence start –
-# they are only accepted when not the first token of a sentence (see pipeline).
+# they are only accepted when not the first token of a sentence (see modules/nlp.py).
 SENTENCE_START_AMBIGUOUS = {"Go", "R", "C", "Edge", "Spring", "Express", "Leaf", "Golf", "Node", "Swift"}
 
 

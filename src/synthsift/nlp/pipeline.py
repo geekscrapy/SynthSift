@@ -18,16 +18,9 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
-from typing import Any, Callable, Iterable
-
-from .regex_extractors import Match
+from typing import Any, Iterable
 
 log = logging.getLogger(__name__)
-
-_ALLOWED_GAZ_POS = {"NOUN", "PROPN", "X", "NUM", "SYM"}
-_SUBJ = {"nsubj", "nsubjpass", "csubj"}
-_OBJ = {"dobj", "attr", "oprd", "dative", "obj"}
-_SPEAKER_PRONOUNS = {"i", "we", "you", "me", "us"}
 
 
 @dataclass
@@ -41,9 +34,6 @@ class Mention:
     sent: int = 0
     verb: str | None = None  # governing verb when the speaker acts on it ("read" /etc/hosts)
     labels: list[str] = field(default_factory=list)  # e.g. IOC / keyword list hits
-
-    def to_tuple(self) -> tuple:
-        return (self.key, self.text, self.category, self.start, self.end, self.source, self.sent, self.verb)
 
 
 @dataclass
@@ -177,24 +167,19 @@ class Analyzer:
     def __init__(self, cfg: dict[str, Any]):
         from ..modules import registry
 
-        self.cfg = cfg
         mods = registry()
-        self.enabled = {n for n, m in mods.items() if m.core or cfg.get(m.switch(), m.default_enabled)}
+        enabled = {n for n, m in mods.items() if m.core or cfg.get(m.switch(), m.default_enabled)}
         # paragraph-scoped extraction modules, in dependency order
-        self.order = [n for n in ("regex", "ioc_tokens", "nlp") if n in self.enabled] + ["entities"]
+        self.order = [n for n in ("regex", "ioc_tokens", "nlp") if n in enabled] + ["entities"]
         self.mods = {n: mods[n](cfg) for n in self.order}
         for m in self.mods.values():
             m.setup()
 
-    def analyze(
-        self,
-        items: Iterable[tuple[str, str, str, bool]],
-        progress: Callable[[int, int], None] | None = None,
-    ) -> dict[str, ParaResult]:
+    def analyze(self, items: Iterable[tuple[str, str, str, bool]]) -> dict[str, ParaResult]:
         """items: (paragraph id, text, role, is_code)."""
         from ..modules import Deps, ParaIn, para_hash
+        from ..modules.entities import to_para_result
 
-        items = list(items)
         paras: dict[str, ParaIn] = {}
         ids: dict[str, str] = {}
         for pid, text, role, code in items:
@@ -206,23 +191,18 @@ class Analyzer:
         columns: dict[str, list[str]] = {}
         for name in self.order:
             mod = self.mods[name]
-            deps = Deps({t: data[t] for t in data}, columns)
-            out = mod.process(chunk, deps)
+            out = mod.process(chunk, Deps(dict(data), columns))
             for tbl in mod.tables:
                 columns[tbl.name] = tbl.names
                 by_para: dict[str, list[tuple]] = {}
                 for row in out.get(tbl.name, []):
                     by_para.setdefault(row[0], []).append(row)
                 data[tbl.name] = by_para
-        if progress:
-            progress(len(items), len(items))
-        from ..modules.entities import to_para_result
-
         return {pid: to_para_result(data.get("x_entities", {}).get(h, []), data.get("x_relations", {}).get(h, []))
                 for pid, h in ids.items()}
 
 
-def extract_text(text: str, cfg: dict[str, Any] | None = None) -> list[Match | Mention]:
+def extract_text(text: str, cfg: dict[str, Any] | None = None) -> list[Mention]:
     """Convenience helper: analyse a single piece of text (used in tests / REPL)."""
     from ..settings import defaults
 

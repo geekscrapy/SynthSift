@@ -60,7 +60,6 @@ class CorpusContext:
 
     def __init__(self, runner: "Runner", module: str, source: CorpusSource | None):
         self.storage = runner.storage
-        self.cfg = runner.cfg
         self.data_dir = runner.data_dir
         self.enabled = runner.enabled
         self._runner, self._module, self._source = runner, module, source
@@ -129,7 +128,6 @@ def _process_chunk(name: str, fp: str, cfg: dict[str, Any], paras: list[ParaIn],
 @dataclass
 class _Job:
     name: str
-    cls: type[Module]
     mod: Module
     fp: str
     chunks: list[list[str]] = field(default_factory=list)
@@ -214,6 +212,7 @@ class Runner:
             self.steps = {n: s for n, s in self.steps.items() if n not in drop}
         self.ensure_tables()
         fps = self.fingerprints(source)
+        sig = source.signature if source else ""  # corpus modules also rerun when the corpus changes
         workers = int(self.cfg.get("workers", 0) or 0) or (os.cpu_count() or 1)
         min_parallel = int(self.cfg.get("parallel_min_paragraphs", 3000))
         finished: set[str] = set()
@@ -245,8 +244,7 @@ class Runner:
             cls, step = self.reg[n], self.steps[n]
             step.state, step.started = "running", time.time()
             if cls.scope == "corpus":
-                key = f"{fps[n]}:{source.signature if source else ''}"
-                if self.storage.get_state(f"fp:{n}") == key and not any(d in self.changed for d in self.deps[n]):
+                if self.storage.get_state(f"fp:{n}") == f"{fps[n]}:{sig}" and not any(d in self.changed for d in self.deps[n]):
                     self._finish(n, "cached", finished)
                     return
                 step.message = "Starting"
@@ -266,18 +264,16 @@ class Runner:
                 self._finish(n, "cached" if n not in self.changed else "done", finished)
                 return
             self.changed.add(n)
-            job = jobs[n] = _Job(n, cls, self.inst[n], fps[n])
-            job.chunks = [pending[i:i + cls.chunk_size] for i in range(0, len(pending), cls.chunk_size)]
+            job = jobs[n] = _Job(n, self.inst[n], fps[n])
             job.in_process = procs_ok and cls.parallel and workers > 1 and len(pending) >= min_parallel
+            size = cls.chunk_size
             if job.in_process:
                 if procs is None:
                     procs = ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"))
                 # smaller chunks keep every worker busy on mid-sized batches
-                size = max(50, min(cls.chunk_size, -(-len(pending) // (workers * 2))))
-                job.chunks = [pending[i:i + size] for i in range(0, len(pending), size)]
-                step.workers = f"{min(workers, len(job.chunks))} processes"
-            else:
-                step.workers = "thread"
+                size = max(50, min(size, -(-len(pending) // (workers * 2))))
+            job.chunks = [pending[i:i + size] for i in range(0, len(pending), size)]
+            step.workers = f"{min(workers, len(job.chunks))} processes" if job.in_process else "thread"
             step.message = f"0 / {len(pending):,} paragraphs"
 
         # modules others wait for go first (the process pool runs chunks in submission order)
@@ -326,17 +322,9 @@ class Runner:
                 done, _ = wait(list(futures), timeout=0.5, return_when=FIRST_COMPLETED)
                 for fut in done:
                     n, hashes = futures.pop(fut)
-                    if hashes is not None and isinstance(fut.exception(), BrokenProcessPool):
-                        job = jobs[n]
-                        job.inflight -= 1
-                        proc_inflight -= 1
-                        fut_in_process.pop(fut, None)
-                        job.chunks.insert(0, hashes)  # redo in a thread
-                        no_processes(fut.exception())
-                        continue
-                    result = fut.result()  # re-raises worker errors
                     if hashes is None:  # corpus module
-                        self.storage.set_state(f"fp:{n}", f"{fps[n]}:{source.signature if source else ''}")
+                        result = fut.result()  # re-raises module errors
+                        self.storage.set_state(f"fp:{n}", f"{fps[n]}:{sig}")
                         self.changed.add(n)
                         self.steps[n].message = f"{result:,} rows" if isinstance(result, int) else ""
                         self._finish(n, "done", finished)
@@ -345,6 +333,11 @@ class Runner:
                     job.inflight -= 1
                     if fut_in_process.pop(fut, False):
                         proc_inflight -= 1
+                    if isinstance(fut.exception(), BrokenProcessPool):
+                        job.chunks.insert(0, hashes)  # redo in a thread
+                        no_processes(fut.exception())
+                        continue
+                    result = fut.result()  # re-raises worker errors
                     t_write = time.time()
                     self._write(n, hashes, result)
                     step = self.steps[n]
@@ -454,6 +447,6 @@ def module_stats(storage: Storage, cfg: dict[str, Any]) -> list[dict[str, Any]]:
             info["paragraphs"] = total
         note = storage.get_state(f"note:{name}")
         info["notes"] = json.loads(note) if note else {}
-        info["requires"] = [d for d in cls(cfg).dependencies(enabled | {name})]
+        info["requires"] = cls(cfg).dependencies(enabled | {name})
         out.append(info)
     return out

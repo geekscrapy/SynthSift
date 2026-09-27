@@ -59,8 +59,6 @@ def _tool_result_text(content: Any) -> str:
         return ""
     if isinstance(content, str):
         return content
-    if isinstance(content, dict):
-        content = [content]
     parts = []
     for part in content if isinstance(content, list) else [content]:
         if isinstance(part, str):
@@ -122,7 +120,6 @@ class ClaudeCodeParser(HarnessParser):
     name = "claude_code"
     label = "Claude Code"
     aliases = ("claude-code", "claudecode", "claude", ".claude")
-    extensions = (".jsonl", ".json")
     description = "Claude Code CLI sessions: ~/.claude/projects/<project>/<session>.jsonl (+ subagents/)."
 
     # ------------------------------------------------------------------ API
@@ -312,9 +309,8 @@ class ClaudeCodeParser(HarnessParser):
     def _assistant_row(self, t: _Thread, row: dict[str, Any], ts: str | None, tool_names: dict[str, str]) -> None:
         msg = row.get("message") or {}
         model = msg.get("model")
-        model = None if model == _SYNTHETIC_MODEL else model
         content = msg.get("content")
-        if row.get("isApiErrorMessage") or (model is None and msg.get("model") == _SYNTHETIC_MODEL):
+        if row.get("isApiErrorMessage") or model == _SYNTHETIC_MODEL:
             t.system(_tool_result_text(content), ts, kind="api_error" if row.get("isApiErrorMessage") else "synthetic")
             return
         if isinstance(content, str):

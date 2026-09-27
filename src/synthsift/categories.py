@@ -96,8 +96,6 @@ CATEGORIES: list[Kind] = [
     Kind("concept", "Concept", "Other", "#A8C7FA", "lightbulb"),
 ]
 
-CATEGORY_KEYS = {c.key for c in CATEGORIES}
-
 NER_TO_CATEGORY = {
     "PERSON": "person",
     "NORP": "group",

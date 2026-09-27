@@ -11,9 +11,9 @@ from typing import Any
 class Field:
     key: str
     label: str
-    type: str  # bool | int | float | select | multiselect | text | textarea | color | lists
+    type: str  # bool | int | float | select | multiselect | text | textarea | color | lists | hidden
     default: Any
-    scope: str  # segment | parse | graph | view
+    scope: str  # segment | parse | graph | view | system
     section: str
     help: str = ""
     options: list[Any] = field(default_factory=list)

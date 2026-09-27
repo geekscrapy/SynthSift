@@ -54,10 +54,6 @@ CATEGORIES = {
 }
 
 
-def max_sev(severities: list[str]) -> str:
-    return max(severities, key=lambda s: SEV_RANK.get(s, 0)) if severities else "info"
-
-
 @dataclass
 class Finding:
     conv: str
@@ -158,6 +154,10 @@ class _Mention:
     key: str
     category: str
     text: str
+
+    @property
+    def sensitive(self) -> bool:
+        return bool(SENSITIVE_PATHS.search(self.text) or SENSITIVE_PATHS.search(self.key))
 
 
 # Bulky text arguments of file-writing, editing and messaging tools (Write, Edit,
@@ -271,7 +271,6 @@ def parse_watchlist(spec: str, default_sev: str = "medium") -> list[_Watch]:
 
 class SecurityScanner:
     def __init__(self, cfg: dict[str, Any]):
-        self.cfg = cfg
         self.detect_flows = cfg.get("sec_dataflow", True)
         self.detect_secrets = cfg.get("sec_secrets", True)
         self.detect_risky = cfg.get("sec_risky_ops", True)
@@ -284,7 +283,7 @@ class SecurityScanner:
         return SEV_RANK.get(severity, 0) >= self.min_rank
 
     # -- per event -------------------------------------------------------
-    def _mentions(self, event, paragraphs, analysis) -> list[_Mention]:
+    def _mentions(self, event, analysis) -> list[_Mention]:
         out: list[_Mention] = []
         for pid in event.paragraphs:
             res = analysis.get(pid)
@@ -299,7 +298,7 @@ class SecurityScanner:
 
     def scan_event(self, event, paragraphs, analysis) -> list[Finding]:
         findings: list[Finding] = []
-        mentions = self._mentions(event, paragraphs, analysis)
+        mentions = self._mentions(event, analysis)
         text = self._event_text(event, paragraphs)
 
         if event.type == "tool_call":
@@ -334,7 +333,7 @@ class SecurityScanner:
 
         if self.sensitive_paths:
             for m in locals_:
-                if SENSITIVE_PATHS.search(m.text) or SENSITIVE_PATHS.search(m.key):
+                if m.sensitive:
                     findings.append(Finding(event.conv, event.id, "credential_access", "sensitive_path",
                                             "Sensitive file accessed", "high",
                                             f"`{base or 'command'}` touched {m.text}", entities=[m.key]))
@@ -401,10 +400,10 @@ class SecurityScanner:
             targets = local_writes  # only files the command actually writes
             if targets:
                 for r in remotes:
-                    for l in targets:
+                    for t in targets:
                         chain("ingress", "download", "File downloaded to disk", "medium",
-                              [(r.key, "downloads to", l.key)], [r.key, l.key],
-                              f"`{base}` downloads {r.text} to {l.text}")
+                              [(r.key, "downloads to", t.key)], [r.key, t.key],
+                              f"`{base}` downloads {r.text} to {t.text}")
             else:
                 for r in remotes:
                     chain("ingress", "download", "Remote resource fetched", "low",
@@ -421,25 +420,20 @@ class SecurityScanner:
     def _secrets(self, event, text: str, mentions: list[_Mention]) -> list[Finding]:
         findings: list[Finding] = []
         if self.detect_secrets and text:
-            seen: set[tuple[str, str]] = set()
-            for name, rx, sev in SECRET_PATTERNS:
+            where = {"tool_result": "tool output", "user": "a user message",
+                     "tool_call": "a tool argument"}.get(event.type, "the conversation")
+            for name, rx, sev in SECRET_PATTERNS:  # first match of each pattern
                 m = rx.search(text)
                 if not m:
                     continue
                 snippet = m.group(0)
                 redacted = snippet[:6] + "…" if len(snippet) > 8 else snippet
-                key = (name, redacted)
-                if key in seen:
-                    continue
-                seen.add(key)
-                where = {"tool_result": "tool output", "user": "a user message",
-                         "tool_call": "a tool argument"}.get(event.type, "the conversation")
                 findings.append(Finding(event.conv, event.id, "data_exposure", "secret." + name,
                                         "Secret exposed", sev,
                                         f"{name.replace('_', ' ')} in {where}: `{redacted}`"))
         if self.sensitive_paths and event.type != "tool_call":
             for m in mentions:
-                if m.category in LOCAL_CATEGORIES and (SENSITIVE_PATHS.search(m.text) or SENSITIVE_PATHS.search(m.key)):
+                if m.category in LOCAL_CATEGORIES and m.sensitive:
                     findings.append(Finding(event.conv, event.id, "credential_access", "sensitive_path",
                                             "Sensitive file referenced", "medium",
                                             f"reference to {m.text}", entities=[m.key]))
@@ -462,6 +456,6 @@ def scan(conversations, events_by_conv, paragraphs, analysis, cfg) -> list[Findi
     scanner = SecurityScanner(cfg)
     findings: list[Finding] = []
     for conv in conversations:
-        for event in events_by_conv.get(conv.id if hasattr(conv, "id") else conv["id"], []):
+        for event in events_by_conv.get(conv.id, []):
             findings.extend(scanner.scan_event(event, paragraphs, analysis))
     return findings

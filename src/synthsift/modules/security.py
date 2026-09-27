@@ -62,7 +62,7 @@ class SecurityModule(Module):
         cfg = {**self.cfg, "sec_enabled": True}
         findings = security.scan(conversations, events, paragraphs, analysis, cfg)
         if self.opt("ioc_findings", True) and "ioc" in ctx.enabled:
-            findings += self._ioc_findings(ctx, events, paragraphs, analysis)
+            findings += self._ioc_findings(ctx, paragraphs, analysis)
         st = ctx.storage
         with st.transaction():
             st.delete("a_findings")
@@ -71,7 +71,7 @@ class SecurityModule(Module):
                                                  for i, f in enumerate(findings)]))
         return len(findings)
 
-    def _ioc_findings(self, ctx, events, paragraphs, analysis) -> list[security.Finding]:
+    def _ioc_findings(self, ctx, paragraphs, analysis) -> list[security.Finding]:
         min_rank = security.SEVERITIES.index(self.opt("sec_min_severity", "low")) if self.opt("sec_min_severity") else 0
         by_hash: dict[str, list] = {}
         for p in paragraphs.values():
@@ -90,7 +90,7 @@ class SecurityModule(Module):
                 seen.add(key)
                 ents = [m.key for m in analysis.get(p.id).mentions if m.start < e and s < m.end] if p.id in analysis else []
                 shown = p.text[s:e]
-                what = f"{kind} " if kind not in ("keyword",) else ""
+                what = f"{kind} " if kind != "keyword" else ""
                 out.append(security.Finding(p.conv, p.event, "ioc", f"ioc.{lst}", f"List hit: {label}", sev,
                                             f"{what}`{shown}` is on {lst}" + (f" ({value})" if value.lower() != shown.lower() else ""),
                                             entities=ents))

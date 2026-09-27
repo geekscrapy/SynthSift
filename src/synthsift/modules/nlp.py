@@ -14,19 +14,13 @@ from ..categories import NER_TO_CATEGORY
 from ..db import table
 from ..fields import Field
 from ..nlp import gazetteer
-from ..nlp.pipeline import (
-    _ALLOWED_GAZ_POS,
-    _OBJ,
-    _SPEAKER_PRONOUNS,
-    _SUBJ,
-    TEXT_SOURCES,
-    analysed_text,
-    analysis_mode,
-    load_spacy,
-    resolve_wordnet,
-    wordnet_lexicon,
-)
+from ..nlp.pipeline import TEXT_SOURCES, analysed_text, analysis_mode, load_spacy, resolve_wordnet, wordnet_lexicon
 from .base import Module, register, span_table
+
+_ALLOWED_GAZ_POS = {"NOUN", "PROPN", "X", "NUM", "SYM"}
+_SUBJ = {"nsubj", "nsubjpass", "csubj"}
+_OBJ = {"dobj", "attr", "oprd", "dative", "obj"}
+_SPEAKER_PRONOUNS = {"i", "we", "you", "me", "us"}
 
 NER_LABELS = [
     "PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART",
@@ -248,5 +242,4 @@ class NLPModule(Module):
                 subj_starts = [s.idx for s in subjects]
                 for oi, (obj_tok, label) in enumerate(objects):
                     rows.append((h, seq, oi, si, label, obj_tok.idx, subj_starts, speaker))
-                seq += 1
                 seq += 1

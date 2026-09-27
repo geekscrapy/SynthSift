@@ -9,7 +9,6 @@ from .base import (  # noqa: F401
     enabled_modules,
     Module,
     ParaIn,
-    fingerprint,
     para_hash,
     register,
     registry,

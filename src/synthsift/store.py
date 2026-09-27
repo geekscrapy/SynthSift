@@ -22,6 +22,7 @@ import logging
 import threading
 import time
 import traceback
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ from .db.schema import CONVERSATIONS, CORE, DATASETS, EVENTS, PARA_TEXT, PARAGRA
 from .graph.builder import build_graph, graph_to_json
 from .ingest import read_zip
 from .models import Conversation
-from .modules import enabled_modules, para_hash
+from .modules import enabled_modules, para_hash, registry
 from .modules.entities import to_para_result
 from .modules.runner import Runner
 from .nlp import security
@@ -116,6 +117,7 @@ class Workspace:
         self.warnings: list[str] = []
         self.last_run: dict[str, Any] = {}
         self.signature = ""
+        self._corpus_analysis: dict[str, ParaResult] | None = None  # loaded once per run, see corpus()
         self._lock = threading.Lock()
         self._pending: set[str] = set()
         self._thread: threading.Thread | None = None
@@ -129,10 +131,11 @@ class Workspace:
 
     # ------------------------------------------------------------ datasets
     def _load_index(self) -> None:
-        rows = self.db.query("SELECT id, name, uploaded_at, size, files, conversations, warnings, ingested FROM datasets")
+        sql = "SELECT id, name, uploaded_at, size, files, conversations, warnings, ingested FROM datasets"
+        rows = self.db.query(sql)
         if not rows:
             self._migrate_index()
-            rows = self.db.query("SELECT id, name, uploaded_at, size, files, conversations, warnings, ingested FROM datasets")
+            rows = self.db.query(sql)
         for r in rows:
             if (self.uploads / f"{r[0]}.zip").exists():
                 self.datasets[r[0]] = Dataset(r[0], r[1], r[2], r[3], r[4] or 0, r[5] or 0, json.loads(r[6] or "[]"),
@@ -249,10 +252,7 @@ class Workspace:
     def _restore(self) -> None:
         """Load the stored corpus (no zip parsing, no segmenting when settings are unchanged)."""
         self._set("ingest", 0, "Loading the stored corpus")
-        rows = self.db.query("SELECT c.doc FROM conversations c JOIN datasets d ON c.dataset = d.id "
-                             "ORDER BY d.uploaded_at, c.ord")
-        self.conversations = [Conversation.model_validate_json(r[0]) for r in rows]
-        self.warnings = [f"{ds.name}: {w}" for ds in self._ordered_datasets() for w in ds.warnings]
+        self._load_conversations()
         self.events, self.paragraphs, self.hashes = {}, {}, {}
         if self.db.get_state("segment_fp") != self.settings.fingerprint("segment"):
             return
@@ -264,7 +264,15 @@ class Workspace:
                 "JOIN para_text t ON p.hash = t.hash ORDER BY p.conv, p.seq"):
             self.paragraphs[pid] = Paragraph(pid, conv, ev, seq, text, role, bool(code), arg)
             self.hashes[pid] = h
-        # conversation order, as the in-memory pipeline would produce it
+        self._sort_paragraphs()
+
+    def _load_conversations(self) -> None:
+        rows = self.db.query("SELECT c.doc FROM conversations c JOIN datasets d ON c.dataset = d.id "
+                             "ORDER BY d.uploaded_at, c.ord")
+        self.conversations = [Conversation.model_validate_json(r[0]) for r in rows]
+
+    def _sort_paragraphs(self) -> None:
+        """Conversation order, as the in-memory pipeline would produce it."""
         order = {c.id: i for i, c in enumerate(self.conversations)}
         self.paragraphs = dict(sorted(self.paragraphs.items(), key=lambda kv: (order.get(kv[1].conv, 0), kv[1].seq)))
 
@@ -295,9 +303,7 @@ class Workspace:
                 self.db.delete("datasets", "id = ?", (ds.id,))
                 self.db.insert(Batch.from_rows(DATASETS, [ds.row()]))
         if gone or todo or not self.conversations:
-            rows = self.db.query("SELECT c.doc FROM conversations c JOIN datasets d ON c.dataset = d.id "
-                                 "ORDER BY d.uploaded_at, c.ord")
-            self.conversations = [Conversation.model_validate_json(r[0]) for r in rows]
+            self._load_conversations()
         self.warnings = [f"{ds.name}: {w}" for ds in self._ordered_datasets() for w in ds.warnings]
 
     def _segment(self) -> None:
@@ -331,27 +337,23 @@ class Workspace:
                 self.hashes[p.id] = h
                 p_rows.append((p.id, p.conv, p.event, p.seq, h))
                 texts.setdefault(h, (h, p.text, p.role, p.code, p.arg))
-        order = {c.id: i for i, c in enumerate(self.conversations)}
-        self.paragraphs = dict(sorted(self.paragraphs.items(), key=lambda kv: (order.get(kv[1].conv, 0), kv[1].seq)))
+        self._sort_paragraphs()
         self._set("segment", 0.9, "Storing paragraphs")
         with self.db.transaction():
-            # conversations removed since the last run
-            self.db.execute("DELETE FROM events WHERE conv NOT IN (SELECT id FROM conversations)")
-            self.db.execute("DELETE FROM paragraphs WHERE conv NOT IN (SELECT id FROM conversations)")
-            if new:  # never duplicate turns of a conversation that was stored before
-                self.db.delete_in("events", "conv", [c.id for c in new])
-                self.db.delete_in("paragraphs", "conv", [c.id for c in new])
+            for table in ("events", "paragraphs"):
+                # conversations removed since the last run
+                self.db.execute(f"DELETE FROM {table} WHERE conv NOT IN (SELECT id FROM conversations)")
+                # never duplicate turns of a conversation that was stored before
+                self.db.delete_in(table, "conv", [c.id for c in new])
             self.db.insert(Batch.from_rows(EVENTS, ev_rows))
             self.db.insert(Batch.from_rows(PARAGRAPHS, p_rows))
             if texts:
                 known = {r[0] for r in self.db.select_in("para_text", "hash", list(texts), ["hash"])}
                 self.db.insert(Batch.from_rows(PARA_TEXT, [v for h, v in texts.items() if h not in known]))
             self.db.execute("DELETE FROM para_text WHERE hash NOT IN (SELECT hash FROM paragraphs)")
-        self._segment_signature()
 
     def _enrich(self) -> None:
-        if not self.signature:
-            self._segment_signature()
+        self._segment_signature()
 
         def progress(steps: list[dict[str, Any]]) -> None:
             self.status.steps = steps
@@ -385,7 +387,7 @@ class Workspace:
 
     # CorpusSource for corpus-scope modules
     def corpus(self):
-        if getattr(self, "_corpus_analysis", None) is None:
+        if self._corpus_analysis is None:
             self._corpus_analysis = self._load_analysis()
         return self.conversations, self.events, self.paragraphs, self._corpus_analysis
 
@@ -447,7 +449,7 @@ class Workspace:
 
     def _build(self) -> None:
         self._set("graph", 0.2, "Loading module results")
-        self.analysis = self._corpus_analysis if getattr(self, "_corpus_analysis", None) is not None else self._load_analysis()
+        self.analysis = self.corpus()[3]  # reuses what corpus modules loaded in this run
         self._corpus_analysis = None
         self.findings = self._load_findings()
         labels = self._para_labels()
@@ -456,9 +458,6 @@ class Workspace:
         G = build_graph(convs, self.events, self.paragraphs, self.analysis, self.settings.values, self.findings)
         self.graph = G
         data = graph_to_json(G)
-        sev_counts: dict[str, int] = {}
-        for f in self.findings:
-            sev_counts[f.severity] = sev_counts.get(f.severity, 0) + 1
         paragraphs = []
         for pid, p in self.paragraphs.items():
             d = p.to_json()
@@ -478,7 +477,7 @@ class Workspace:
             "security": {
                 "categories": security.CATEGORIES,
                 "severities": security.SEVERITIES,
-                "counts": sev_counts,
+                "counts": dict(Counter(f.severity for f in self.findings)),
             },
             "warnings": self.warnings,
             "datasets": [d.to_json() for d in self.datasets.values()],
@@ -497,8 +496,6 @@ class Workspace:
         h = self.hashes.get(pid)
         if h is None:
             return None
-        from .modules import registry
-
         existing = set(self.db.tables())
         enabled = enabled_modules(self.settings.values)
         out = []

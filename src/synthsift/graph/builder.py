@@ -24,6 +24,7 @@ import networkx as nx
 
 from ..categories import NODE_TYPES
 from ..nlp.pipeline import ParaResult
+from ..nlp.security import SEV_RANK
 from ..segment import Event, Paragraph
 
 LAYER_OF = {k.key: k.layer for k in NODE_TYPES}
@@ -72,8 +73,6 @@ def build_graph(
     findings: list[Any] | None = None,
 ) -> nx.MultiDiGraph:
     """conversations: [{id, title, …}], events: conv id -> events in order."""
-    from ..nlp.security import SEV_RANK
-
     G = nx.MultiDiGraph()
     merge = cfg.get("merge_across_conversations", True)
     arg_max = int(cfg.get("arg_value_max", 48))
@@ -305,13 +304,7 @@ def build_graph(
 
 
 def graph_to_json(G: nx.MultiDiGraph) -> dict[str, list[dict[str, Any]]]:
-    nodes = []
-    for nid, d in G.nodes(data=True):
-        n = {"id": nid, **{k: v for k, v in d.items() if k != "title"}}
-        n["deg"] = G.degree(nid)
-        nodes.append(n)
-    edges = []
-    for i, (u, v, d) in enumerate(G.edges(data=True)):
-        e = {"id": i, "from": u, "to": v, **d}
-        edges.append(e)
+    nodes = [{"id": nid, **{k: v for k, v in d.items() if k != "title"}, "deg": G.degree(nid)}
+             for nid, d in G.nodes(data=True)]
+    edges = [{"id": i, "from": u, "to": v, **d} for i, (u, v, d) in enumerate(G.edges(data=True))]
     return {"nodes": nodes, "edges": edges}

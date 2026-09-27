@@ -18,7 +18,7 @@ from . import __version__
 from .graph.export import subgraph, to_graphml, to_pyvis_html
 from .harnesses import all_parsers
 from .modules import registry
-from .modules.ioc import LIST_SUFFIXES
+from .modules.ioc import LIST_SUFFIXES, disabled_lists
 from .modules.runner import module_stats
 from .nlp.pipeline import installed_models
 from .store import Workspace
@@ -107,7 +107,7 @@ def create_app(workspace: Workspace) -> FastAPI:
     # ------------------------------------------------------------- lists
     def _lists() -> list[dict]:
         w = ws()
-        disabled = {x.strip() for x in str(w.settings.values.get("ioc_disabled", "")).splitlines() if x.strip()}
+        disabled = disabled_lists(w.settings.values)
         note = w.db.get_state("note:ioc")
         loaded = {d["file"]: d["entries"] for d in (json.loads(note).get("lists", []) if note else [])}
         out = []

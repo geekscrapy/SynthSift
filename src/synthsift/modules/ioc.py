@@ -32,9 +32,9 @@ from typing import Any
 from ..db import table
 from ..fields import Field
 from ..nlp.regex_extractors import REGEX_BY_NAME
+from ..nlp.security import SEVERITIES
 from .base import Module, register, span_table
 
-SEVERITIES = ["info", "low", "medium", "high", "critical"]
 KIND_CATEGORY = {"ip": "ip", "cidr": "ip", "domain": "domain", "url": "url", "email": "email", "hash": "hash",
                  "path": "file_path", "keyword": "keyword"}
 
@@ -155,10 +155,15 @@ class IOCTokensModule(Module):
 LIST_SUFFIXES = (".txt", ".csv", ".tsv", ".list", ".ioc", ".lst")
 
 
+def disabled_lists(cfg: dict[str, Any]) -> set[str]:
+    """File names of the uploaded lists switched off on the Settings page."""
+    return {x.strip() for x in str(cfg.get("ioc_disabled", "")).splitlines() if x.strip()}
+
+
 def list_files(data_dir: Path | None, cfg: dict[str, Any]) -> list[Path]:
     """Every enabled list: uploads (minus the disabled ones) and server-side paths / globs."""
     files: list[Path] = []
-    disabled = {x.strip() for x in str(cfg.get("ioc_disabled", "")).splitlines() if x.strip()}
+    disabled = disabled_lists(cfg)
     if data_dir is not None and (data_dir / "lists").is_dir():
         files += [p for p in sorted((data_dir / "lists").iterdir())
                   if p.is_file() and p.name not in disabled and not p.name.endswith(".part")]
@@ -279,7 +284,7 @@ class IOCModule(Module):
 
     def fingerprint_extra(self, ctx: Any) -> Any:
         out = []
-        for f in list_files(getattr(ctx, "data_dir", None), self.cfg):
+        for f in list_files(ctx.data_dir, self.cfg):
             try:
                 st = f.stat()
                 out.append((str(f), st.st_size, int(st.st_mtime)))

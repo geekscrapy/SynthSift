@@ -41,13 +41,10 @@ def _q(name: str) -> str:
 
 
 class DuckDBStorage(Storage):
-    backend = "duckdb"
-
     def __init__(self, path: Path | str | None):
-        self.path = str(path) if path else ":memory:"
         if path:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._con = duckdb.connect(self.path)
+        self._con = duckdb.connect(str(path) if path else ":memory:")
         self._local = threading.local()
         self._write_lock = threading.RLock()
         self.execute("CREATE TABLE IF NOT EXISTS kv_state (key VARCHAR PRIMARY KEY, value VARCHAR)")

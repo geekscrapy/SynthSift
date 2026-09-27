@@ -121,7 +121,7 @@ REGEX_DEFS: list[RegexDef] = [
     RegexDef("hashtag", "tag", re.compile(r"(?<![\w&#])#[A-Za-z][\w-]{1,50}\b"), literal=False),
     RegexDef("inline_code", "code", re.compile(r"`([^`\n]{2,80})`"), group=1,
              validate=lambda s: s.strip().lower() not in _STOP_CODE),
-    RegexDef("function_call", "code", re.compile(r"\b[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)*\(\)"), default=True),
+    RegexDef("function_call", "code", re.compile(r"\b[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)*\(\)")),
     RegexDef("snake_case", "code", re.compile(r"(?<![\w.$-])[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b(?![-/])")),
     RegexDef("dotted_identifier", "code", re.compile(
         r"(?<![\w./-])[a-z_][a-z0-9_]*(?:\.[a-z_][A-Za-z0-9_]*)+\b(?![-/(]|\.\w)"),

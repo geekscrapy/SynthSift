@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import Batch, Column, Storage, Table, table  # noqa: F401
+from .base import Batch, Storage, Table, table  # noqa: F401
 
 
 def open_storage(path: Path | str | None, backend: str = "duckdb") -> Storage:

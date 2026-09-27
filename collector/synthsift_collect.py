@@ -36,6 +36,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -241,9 +242,9 @@ def write_zip(matches: List[Match], out: Path, host: str) -> Report:
                     except sqlite3.Error:
                         wal = Path(f"{m.path}-wal")
                         if wal.is_file():  # copy the write-ahead log too, SynthSift reads it
-                            zf.write(wal, arc + "-wal", compress_type=zipfile.ZIP_DEFLATED)
+                            zf.write(wal, arc + "-wal")
                             method = "copy+wal"
-                zf.write(src, arc, compress_type=zipfile.ZIP_DEFLATED)
+                zf.write(src, arc)
                 size = src.stat().st_size
                 digest = _sha256(src)
             except (OSError, ValueError, zipfile.BadZipFile) as exc:
@@ -306,9 +307,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0 if matches or args.dry_run else 1
     out = Path(args.output or f"synthsift-collect-{host}-{time.strftime('%Y%m%d-%H%M%S')}.zip")
     rep = write_zip(matches, out, host)
-    per_agent = {}
-    for row in rep.written:
-        per_agent[row["agent"]] = per_agent.get(row["agent"], 0) + 1
+    per_agent = Counter(row["agent"] for row in rep.written)
     users = sorted({row["user"] for row in rep.written})
     summary = ", ".join(f"{n} {a}" for a, n in sorted(per_agent.items()))
     print(f"wrote {out} ({rep.bytes / 1e6:.1f} MB): {summary} file(s) for {', '.join(users)} on {host}", file=sys.stderr)
