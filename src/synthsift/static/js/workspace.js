@@ -442,12 +442,15 @@ const WS = (() => {
   // reload when the server finishes a new analysis
   let lastVersion = null;
   async function watchVersion() {
+    let delay = 3000;
     try {
       const st = await api("/api/status");
+      SS.loading.update(st, { blocking: !W.data });
+      if (st.state === "running") delay = 600;
       if (lastVersion !== null && st.state === "idle" && st.version !== lastVersion) { await load(); emit("reload"); }
       if (st.state === "idle") lastVersion = st.version;
     } catch (e) { /* offline */ }
-    setTimeout(watchVersion, 3000);
+    setTimeout(watchVersion, delay);
   }
 
   /** CSV download */
@@ -532,6 +535,7 @@ const WS = (() => {
     const chips = [tag(k.label)];
     if (n.type === "entity") chips.push(tag(`${fmt(n.count || 0)} mentions`));
     chips.push(tag(`${fmt(n.deg || 0)} links`), tag(`${fmt(convs.length)} conversations`));
+    for (const l of n.labels || []) chips.push(el("span", { class: "tag warn", title: "On an IOC / keyword list" }, icon("playlist_add_check", "xs"), l));
     const [first, last] = seenRange(id);
     const body = el("div", { class: "detail-body" });
     if (first) body.append(el("div", { class: "cell-muted" }, `Seen ${fmtTime(first)}${last && last !== first ? " – " + fmtTime(last) : ""}`));

@@ -240,16 +240,17 @@
     try {
       const st = await api("/api/status");
       const bar = $("progress");
+      // the loading screen: full screen until there is a graph, then a card in the corner
+      SS.loading.update(st, { blocking: !S.data });
       if (st.state === "running") {
         bar.classList.remove("hidden");
         bar.classList.toggle("indeterminate", !st.progress);
         bar.querySelector(".bar").style.width = `${Math.round((st.progress || 0) * 100)}%`;
         bar.title = st.message;
-        showBusy(st.message || "Working…");
+        busyShown = "running";
         delay = 500;
       } else {
         bar.classList.add("hidden");
-        if (st.state === "error") snack("Processing failed: " + st.error, null, 10000);
         if (st.version !== S.version && st.version > 0) {
           await refresh();
         }
@@ -260,11 +261,6 @@
     polling = setTimeout(pollStatus, delay);
   }
   let busyShown = "";
-  function showBusy(msg) {
-    if (busyShown === msg) return;
-    busyShown = msg;
-    snack(msg, null, 0);
-  }
 
   async function refresh() {
     let g;
@@ -348,7 +344,7 @@
   }
 
   const kindKey = (n) => (n.type === "entity" ? n.category : n.type);
-  // categories invented in Settings → Custom vocabulary get a stable colour of their own
+  // categories invented in a custom vocabulary (Settings → Modules → spaCy NLP) get a stable colour of their own
   const EXTRA_COLORS = ["#7B1FA2", "#00897B", "#C0CA33", "#6D4C41", "#3949AB", "#D81B60", "#00ACC1", "#F4511E"];
   function customKind(key) {
     let h = 0;
@@ -1267,6 +1263,7 @@
     const convs = (n.conv || []).map((c) => S.convs.get(c)).filter(Boolean);
     const sub = el("div", { class: "sub" }, el("span", { class: "tag" }, k.label));
     if (n.type === "entity") sub.append(el("span", { class: "tag" }, plural(n.count, "mention")));
+    for (const l of n.labels || []) sub.append(el("span", { class: "tag warn", title: "On an IOC / keyword list" }, icon("playlist_add_check", "xs"), l));
     const pidCount = new Set(visibleOcc(n).map((o) => o[0])).size;
     sub.append(el("span", { class: "tag" }, plural(pidCount, "paragraph")));
     sub.append(el("span", { class: "tag" }, plural(convs.length, "conversation")));
@@ -1439,6 +1436,7 @@
         (ev.call_id ? `<span class="tag mono">${esc(ev.call_id)}</span>` : "") +
         `<span class="ts">${fmtTime(ev.ts)}</span>` +
         `<button class="icon-btn sm tagbtn${tags.length || (ann && ann.comment) ? " has" : ""}" data-tagmenu="${esc(evTarget)}" title="Tag or comment on this turn (or right-click it)"><span class="msi xs">sell</span></button>` +
+        `<button class="icon-btn sm inspect" data-inspect="${esc(ev.id)}" title="What the enrichment modules extracted from this turn"><span class="msi xs">data_object</span></button>` +
         `<button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button></div>` +
         (ann && ann.comment ? `<div class="comment-note"><span class="msi">comment</span>${esc(ann.comment)}</div>` : "") +
         `<div class="msg-body">${ev.p.map((pid) => paraHTML(S.paras.get(pid))).join("")}</div>` +
@@ -1675,6 +1673,8 @@
     const t = ev.target;
     const tm = t.closest("[data-tagmenu]");
     if (tm) { const r = tm.getBoundingClientRect(); openTagMenu(tm.dataset.tagmenu, r.left, r.bottom + 4); return; }
+    const ins = t.closest("[data-inspect]");
+    if (ins) { const e2 = S.events.get(ins.dataset.inspect); if (e2) SS.inspect(e2.p, { title: e2.label, paras: S.paras }); return; }
     const fr = t.closest("[data-finding]");
     if (fr) { const f = S.data.findings[Number(fr.dataset.finding)]; if (f) jumpToEvent(f.event); return; }
     const ent = t.closest(".ent");
@@ -2200,7 +2200,7 @@
     try {
       snack(`Uploading ${plural(zips.length, "file")}…`, null, 0);
       await api("/api/upload", { method: "POST", body: fd });
-      showBusy("Analysing transcripts…");
+      busyShown = "running"; $("snackbar").classList.remove("show");
       pollStatus();
     } catch (e) {
       snack("Upload failed: " + e.message, null, 8000);
@@ -2283,7 +2283,7 @@
     for (const id of ["btn-upload", "empty-upload"]) $(id).addEventListener("click", () => file.click());
     file.addEventListener("change", () => { upload(file.files); file.value = ""; });
     $("empty-samples").addEventListener("click", async () => {
-      try { await api("/api/samples", { method: "POST" }); showBusy("Loading sample transcripts…"); pollStatus(); } catch (e) { snack(e.message); }
+      try { await api("/api/samples", { method: "POST" }); busyShown = "running"; pollStatus(); } catch (e) { snack(e.message); }
     });
     let dragDepth = 0;
     window.addEventListener("dragenter", (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { dragDepth++; $("drop").classList.add("show"); } });

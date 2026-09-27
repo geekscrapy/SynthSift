@@ -44,7 +44,7 @@ TECH_NOUNS = {
     "bucket", "secret", "webhook", "endpoint", "request", "response", "payload", "header", "cookie", "proxy",
     "router", "gateway", "firewall", "agent", "model", "prompt", "context", "tool", "runner", "pipeline",
 }
-SOURCE_WEIGHT = {"custom": 4.0, "regex": 3.0, "vocab": 2.5, "ner": 2.0, "wordnet": 1.0, "concept": 0.5}
+SOURCE_WEIGHT = {"custom": 4.0, "ioc": 3.5, "regex": 3.0, "vocab": 2.5, "ner": 2.0, "wordnet": 1.0, "concept": 0.5}
 
 
 @dataclass
@@ -54,6 +54,7 @@ class _EntityAcc:
     convs: set[str] = field(default_factory=set)
     cats: Counter = field(default_factory=Counter)
     surfaces: Counter = field(default_factory=Counter)
+    labels: set[str] = field(default_factory=set)  # IOC / keyword list labels
     non_thought: bool = False
 
 
@@ -174,6 +175,8 @@ def build_graph(
                     acc.convs.add(cid)
                     acc.cats[m.category] += SOURCE_WEIGHT.get(m.source.split(":")[0], 1.0)
                     acc.surfaces[m.text] += 1
+                    if m.labels:
+                        acc.labels.update(m.labels)
                     acc.non_thought |= not is_thought
                     me = mention_edges.setdefault((src_node, nid), {"w": 0, "verbs": Counter(), "conv": cid,
                                                                     "thought": is_thought})
@@ -206,8 +209,10 @@ def build_graph(
     # ------------------------------------------------------ entity nodes
     min_mentions = int(cfg.get("min_mentions", 1))
     max_entities = int(cfg.get("max_entities", 1500))
-    ranked = sorted((n for n, a in ent_acc.items() if a.count >= min_mentions),
-                    key=lambda n: (-ent_acc[n].count, n))[:max_entities]
+    # entities on an IOC / keyword list are kept whatever their count, with a budget of their own
+    by_rank = sorted(ent_acc, key=lambda n: (-ent_acc[n].count, n))
+    ranked = ([n for n in by_rank if ent_acc[n].labels][:max_entities]
+              + [n for n in by_rank if not ent_acc[n].labels and ent_acc[n].count >= min_mentions][:max_entities])
     keep = set(ranked)
     for nid in ranked:
         acc = ent_acc[nid]
@@ -225,6 +230,8 @@ def build_graph(
         G.add_node(nid, label=" ".join(label.split()), type="entity", category=category,
                    layer="entity" if acc.non_thought else "thought", conv=sorted(acc.convs),
                    occ=acc.occ, count=acc.count)
+        if acc.labels:
+            G.nodes[nid]["labels"] = sorted(acc.labels)
 
     if cfg.get("mention_edges", True):
         for (src, dst), me in mention_edges.items():

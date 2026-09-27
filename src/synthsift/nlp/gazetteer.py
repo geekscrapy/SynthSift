@@ -6,7 +6,7 @@ Two lists per category:
 * ``CASED`` – ambiguous words that only count when capitalised as written
   ("Rust" the language vs "rust" on a wheel arch)
 
-Users add their own lists in Settings → Custom vocabulary.
+Users add their own lists in Settings → Modules → spaCy NLP → Custom vocabulary.
 """
 
 from __future__ import annotations

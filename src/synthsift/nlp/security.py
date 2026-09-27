@@ -50,6 +50,7 @@ CATEGORIES = {
     "destruction": "Destructive / data loss",
     "evasion": "Log / history clearing",
     "watchlist": "Watchlist match",
+    "ioc": "IOC / keyword list hit",
 }
 
 

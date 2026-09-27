@@ -19,6 +19,7 @@
     tagMode: store.get("nodes.tagMode", "all"),
     minSev: store.get("nodes.minSev", ""),
     secCats: new Set(store.get("nodes.secCats", [])),
+    lists: new Set(store.get("nodes.lists", [])), // IOC / keyword list labels
     minMentions: store.get("nodes.minMentions", 0),
     hiddenCols: new Set(store.get("nodes.hiddenCols", ["layer"])),
     checked: new Set(),
@@ -35,6 +36,7 @@
     store.set("nodes.tagMode", P.tagMode);
     store.set("nodes.minSev", P.minSev);
     store.set("nodes.secCats", [...P.secCats]);
+    store.set("nodes.lists", [...P.lists]);
     store.set("nodes.minMentions", P.minMentions);
     store.set("nodes.hiddenCols", [...P.hiddenCols]);
   };
@@ -91,6 +93,10 @@
       cell: (r) => el("td", {}, el("div", { class: "cell-tags", html: WS.tagChipsHTML(r.tags, inheritedTags(r)) },
         r.ann && r.ann.comment ? el("span", { class: "msi", title: r.ann.comment }, "comment") : null)),
     },
+    {
+      key: "lists", label: "Lists", get: (r) => (r.n.labels || []).join(" "),
+      cell: (r) => el("td", {}, el("div", { class: "cell-tags" }, (r.n.labels || []).map((l) => el("span", { class: "tag warn", title: "On an IOC / keyword list" }, icon("playlist_add_check", "xs"), l)))),
+    },
     { key: "layer", label: "Layer", get: (r) => LAYER_LABEL[r.n.layer] || "", cell: (r) => el("td", { class: "cell-muted" }, LAYER_LABEL[r.n.layer] || "–") },
     { key: "mentions", label: "Mentions", num: true, get: (r) => r.m.mentions, cell: (r) => el("td", { class: "num" }, fmt(r.m.mentions)) },
     { key: "links", label: "Links", num: true, get: (r) => r.n.deg || 0, cell: (r) => el("td", { class: "num" }, fmt(r.n.deg || 0)) },
@@ -122,7 +128,7 @@
   function computeRows() {
     const rx = WS.makeRegex(P.q.trim());
     const minRank = P.minSev ? WS.sevRank(P.minSev) : -1;
-    const kindCounts = new Map(), layerCounts = new Map(), catCounts = new Map();
+    const kindCounts = new Map(), layerCounts = new Map(), catCounts = new Map(), listCounts = new Map();
     const rows = [];
     let total = 0;
     for (const n of W.nodes.values()) {
@@ -142,6 +148,8 @@
       if (m.sev) for (const c of n.secc || []) catCounts.set(c, (catCounts.get(c) || 0) + 1);
       if (minRank >= 0 && !(m.sev && WS.sevRank(m.sev) >= minRank)) continue;
       if (P.secCats.size && !(n.secc || []).some((c) => P.secCats.has(c))) continue;
+      for (const l of n.labels || []) listCounts.set(l, (listCounts.get(l) || 0) + 1);
+      if (P.lists.size && !(n.labels || []).some((l) => P.lists.has(l))) continue;
       kindCounts.set(m.kind.key, (kindCounts.get(m.kind.key) || 0) + 1);
       layerCounts.set(n.layer, (layerCounts.get(n.layer) || 0) + 1);
       if (P.hiddenLayers.has(n.layer) || P.hiddenKinds.has(m.kind.key)) continue;
@@ -156,16 +164,16 @@
       const d = typeof x === "number" ? x - y : String(x).localeCompare(String(y));
       return d * dir || a.n.label.localeCompare(b.n.label);
     });
-    return { rows, total, kindCounts, layerCounts, catCounts };
+    return { rows, total, kindCounts, layerCounts, catCounts, listCounts };
   }
 
   function filtersActive() {
-    return !!(P.q || P.hiddenKinds.size || P.hiddenLayers.size || P.tagMode !== "all" || P.minSev || P.secCats.size || P.minMentions
+    return !!(P.q || P.hiddenKinds.size || P.hiddenLayers.size || P.tagMode !== "all" || P.minSev || P.secCats.size || P.lists.size || P.minMentions
       || W.tagFilter.size || W.filter.host || W.filter.user || W.filter.harness || W.filter.conv);
   }
   function resetFilters() {
     P.q = ""; $("q").value = "";
-    P.hiddenKinds.clear(); P.hiddenLayers.clear(); P.tagMode = "all"; P.minSev = ""; P.secCats.clear(); P.minMentions = 0;
+    P.hiddenKinds.clear(); P.hiddenLayers.clear(); P.tagMode = "all"; P.minSev = ""; P.secCats.clear(); P.lists.clear(); P.minMentions = 0;
     $("min-mentions").value = 0;
     save();
     W.tagFilter.clear(); store.set("tagFilter", []); WS.broadcast({ type: "tagFilter", tags: [] });
@@ -192,6 +200,9 @@
         el("h3", {}, icon("shield", "xs"), "Security"),
         el("div", { class: "field-row" }, sev),
         el("div", { class: "chip-row", id: "cats" })),
+      el("div", { class: "rail-section hidden", id: "lists-sec" },
+        el("h3", {}, icon("playlist_add_check", "xs"), "Lists", el("a", { href: "/settings#modules", title: "Manage IOC / keyword lists" }, "Manage")),
+        el("div", { class: "chip-row", id: "listf" })),
       el("div", { class: "rail-section" },
         el("h3", {}, icon("category", "xs"), "Node types", el("button", { onclick: () => { P.hiddenKinds.clear(); P.hiddenLayers.clear(); changed(); } }, "Show all")),
         el("div", { class: "chip-row", id: "layers" }), el("div", { id: "kinds", style: { marginTop: "6px" } })),
@@ -200,7 +211,7 @@
         el("label", { class: "field-row" }, el("span", { class: "grow" }, "Minimum mentions"), mm)));
   }
 
-  function renderRail({ kindCounts, layerCounts, catCounts }) {
+  function renderRail({ kindCounts, layerCounts, catCounts, listCounts }) {
     WS.renderFilterSelects($("scope"));
     const hidden = [...W.hiddenConvs].filter((c) => W.convs.has(c));
     $("hidden-note").replaceChildren(...(hidden.length ? [el("div", { class: "field-row cell-muted" }, icon("visibility_off", "xs"),
@@ -214,6 +225,12 @@
       class: `chip sm${P.secCats.has(c.key) ? " selected" : ""}`, title: `Only ${c.label.toLowerCase()} findings`,
       onclick: () => { P.secCats.has(c.key) ? P.secCats.delete(c.key) : P.secCats.add(c.key); changed(); },
     }, el("span", { class: "label" }, c.label), el("span", { class: "count" }, fmt(catCounts.get(c.key) || 0)))));
+    const lists = [...new Set([...listCounts.keys(), ...P.lists])].sort();
+    $("lists-sec").classList.toggle("hidden", !lists.length);
+    $("listf").replaceChildren(...lists.map((l) => el("button", {
+      class: `chip sm${P.lists.has(l) ? " selected" : ""}`, title: `Only terms on “${l}”`,
+      onclick: () => { P.lists.has(l) ? P.lists.delete(l) : P.lists.add(l); changed(); },
+    }, el("span", { class: "label" }, l), el("span", { class: "count" }, fmt(listCounts.get(l) || 0)))));
     $("layers").replaceChildren(...WS.LAYERS.map((l) => el("button", {
       class: `chip sm${P.hiddenLayers.has(l.key) ? " off" : " selected"}`, title: `Show / hide the ${l.label.toLowerCase()} layer`,
       onclick: () => { P.hiddenLayers.has(l.key) ? P.hiddenLayers.delete(l.key) : P.hiddenLayers.add(l.key); changed(); },

@@ -49,6 +49,7 @@ CATEGORIES: list[Kind] = [
     Kind("software", "Software / tech", "Technical", "#1967D2", "terminal"),
     Kind("cloud", "Cloud resource", "Technical", "#4285F4", "cloud"),
     Kind("mac", "MAC address", "Technical", "#F28B82", "router"),
+    Kind("keyword", "Listed keyword", "Technical", "#E37400", "playlist_add_check"),
     # people & organisations
     Kind("person", "Person", "People & orgs", "#E52592", "person"),
     Kind("role", "Role", "People & orgs", "#FF63B8", "badge"),

@@ -7,3 +7,5 @@ build/
 *.egg-info/
 .synthsift/
 /workspace/
+*.duckdb
+*.duckdb.wal

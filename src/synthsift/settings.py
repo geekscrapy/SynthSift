@@ -1,13 +1,18 @@
 """All user-tunable knobs, declared once.
 
-Each field has a *scope*:
+Each field has a *scope*, which decides what a change re-runs:
 
-* ``parse`` – changing it re-runs NLP extraction over every transcript
-* ``graph`` – changing it rebuilds the graph from cached NLP results (fast)
-* ``view``  – purely client side (layout, physics, colours, panel behaviour)
+* ``segment`` – re-splits transcripts into paragraphs, then everything below
+* ``parse``   – re-runs the enrichment modules the setting belongs to (and the
+  modules that depend on them); other modules keep their stored results
+* ``graph``   – rebuilds the graph from the stored module results (fast)
+* ``view``    – purely client side (layout, physics, colours, panel behaviour)
+* ``system``  – how processing runs (worker processes …); re-runs nothing
 
-The settings page is rendered generically from :data:`SCHEMA`, so adding a knob
-here is enough to expose it in the UI.
+Enrichment modules (:mod:`synthsift.modules`) declare their own options; they
+are appended here, with an on/off switch per module, under *Modules*.  The
+settings page is rendered generically from :data:`SCHEMA`, so adding a knob
+here (or to a module) is enough to expose it in the UI.
 """
 
 from __future__ import annotations
@@ -16,84 +21,23 @@ import copy
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from .categories import CATEGORIES, NODE_TYPES
-from .nlp.regex_extractors import REGEX_DEFS
-from .nlp.security import SEVERITIES
+from .fields import Field  # noqa: F401  (re-exported)
 
-NER_LABELS = [
-    "PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART",
-    "LAW", "LANGUAGE", "DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL",
-]
-WORDNET_CATEGORIES = [
-    "food", "vehicle", "software", "device", "tool", "clothing", "weapon", "medical", "body",
-    "animal", "plant", "substance", "place", "organization", "role", "document", "finance",
-    "time", "measure", "activity", "emotion", "color", "event",
-]
-
-
-@dataclass
-class Field:
-    key: str
-    label: str
-    type: str  # bool | int | float | select | multiselect | text | textarea | color
-    default: Any
-    scope: str  # parse | graph | view
-    section: str
-    help: str = ""
-    options: list[Any] = field(default_factory=list)
-    min: float | None = None
-    max: float | None = None
-    step: float | None = None
-
-
-S_EXTRACT = "Extraction"
 S_SOURCES = "Text sources"
-S_CUSTOM = "Custom vocabulary"
+S_PROCESSING = "Processing"
 S_GRAPH = "Graph content"
 S_EDGES = "Edges & relations"
 S_LAYOUT = "Layout & physics"
 S_LOOK = "Appearance"
 S_PANEL = "Transcript panel"
-S_SECURITY = "Security analysis"
 S_COLORS = "Colours"
 
 SCHEMA: list[Field] = [
-    # ------------------------------------------------------------ extraction
-    Field("spacy_model", "spaCy model", "select", "en_core_web_sm", "parse", S_EXTRACT,
-          "Larger models are slower but recognise entities better. Only installed models work.",
-          options=["en_core_web_sm", "en_core_web_md", "en_core_web_lg", "en_core_web_trf"]),
-    Field("use_ner", "Named entity recognition", "bool", True, "parse", S_EXTRACT,
-          "spaCy NER: people, organisations, places, products, dates, money…"),
-    Field("ner_labels", "NER labels", "multiselect",
-          [x for x in NER_LABELS if x not in ("CARDINAL", "ORDINAL", "PERCENT")],
-          "parse", S_EXTRACT, "Which spaCy entity labels become nodes.", options=NER_LABELS),
-    Field("use_regex", "Pattern extractors", "bool", True, "parse", S_EXTRACT,
-          "Regular expressions for file paths, URLs, IPs, hashes, CVEs, env vars, …"),
-    Field("regex_categories", "Enabled patterns", "multiselect",
-          [d.name for d in REGEX_DEFS if d.default], "parse", S_EXTRACT,
-          options=[d.name for d in REGEX_DEFS]),
-    Field("use_gazetteer", "Built-in vocabularies", "bool", True, "parse", S_EXTRACT,
-          "Curated term lists (software, AI models, vehicle makes, …)."),
-    Field("use_wordnet", "WordNet categories", "bool", True, "parse", S_EXTRACT,
-          "Classify common nouns through WordNet hypernyms: garlic→food, sedan→vehicle, surgeon→role."),
-    Field("wordnet_categories", "WordNet categories kept", "multiselect", WORDNET_CATEGORIES, "parse",
-          S_EXTRACT, "Nouns falling into other categories become plain concepts.", options=WORDNET_CATEGORIES),
-    Field("wordnet_senses", "Senses considered", "int", 3, "parse", S_EXTRACT,
-          "How many WordNet senses of a word may vote for its category.", min=1, max=3),
-    Field("use_concepts", "Noun-phrase concepts", "bool", True, "parse", S_EXTRACT,
-          "Keep uncategorised noun phrases as generic concept nodes."),
-    Field("concept_mode", "Concept granularity", "select", "compound", "parse", S_EXTRACT,
-          "compound: 'sports car'; head: 'car'; phrase: 'red sports car'.",
-          options=["compound", "head", "phrase"]),
-    Field("extract_relations", "Subject–verb–object relations", "bool", True, "parse", S_EXTRACT,
-          "Dependency parse each sentence; link entities via their verb."),
-    Field("min_term_length", "Minimum term length", "int", 2, "parse", S_EXTRACT, min=1, max=10),
-    Field("merge_case", "Merge case variants", "bool", True, "parse", S_EXTRACT,
-          "Treat 'Docker' and 'docker' as one node (literals like paths stay case-sensitive)."),
     # --------------------------------------------------------- text sources
     Field("analyze_thoughts", "Analyse thoughts", "bool", True, "parse", S_SOURCES),
     Field("analyze_tool_args", "Analyse tool arguments", "bool", True, "parse", S_SOURCES),
@@ -103,23 +47,18 @@ SCHEMA: list[Field] = [
           options=["patterns", "full"]),
     Field("code_nlp", "Code block analysis depth", "select", "patterns", "parse", S_SOURCES,
           options=["patterns", "full"]),
-    Field("max_tool_result_chars", "Max tool result characters", "int", 20000, "parse", S_SOURCES,
+    Field("max_tool_result_chars", "Max tool result characters", "int", 20000, "segment", S_SOURCES,
           "Longer tool outputs are truncated before display and analysis.", min=500, max=500000, step=500),
-    Field("max_paragraph_lines", "Max lines per paragraph", "int", 40, "parse", S_SOURCES,
+    Field("max_paragraph_lines", "Max lines per paragraph", "int", 40, "segment", S_SOURCES,
           "Long blocks without blank lines are split into chunks of this many lines.", min=5, max=500),
-    Field("paragraph_split", "Paragraph boundary", "select", "blank_line", "parse", S_SOURCES,
+    Field("paragraph_split", "Paragraph boundary", "select", "blank_line", "segment", S_SOURCES,
           options=["blank_line", "line"]),
-    # ----------------------------------------------------- custom vocabulary
-    Field("custom_gazetteer", "Custom vocabulary", "textarea",
-          "# category: term, term, …\n# food: gochujang, za'atar\n", "parse", S_CUSTOM,
-          "One line per category. Any category name works; unknown ones get a neutral colour."),
-    Field("custom_regex", "Custom patterns", "textarea",
-          "# category: regular expression\n# ticket: \\bJIRA-\\d+\\b\n", "parse", S_CUSTOM),
-    Field("ignore_terms", "Ignored terms", "textarea",
-          "thing\nthings\nway\nlot\nbit\nkind\nsort\nsomething\nanything\neverything\nnothing\n"
-          "one\nones\nexample\nstuff\nlet\nokay\nok\nsure\nplease\nthanks\nthank\nhello\nhi\n"
-          "question\nanswer\npoint\ncase\nfact\npart\nthat\nthis\nit\nyes\nno\n",
-          "parse", S_CUSTOM, "One per line (case-insensitive). These never become nodes."),
+    # ------------------------------------------------------------ processing
+    Field("workers", "Worker processes", "int", 0, "system", S_PROCESSING,
+          "Paragraph modules run in this many processes on large corpora (0 = one per CPU core, 1 = no extra "
+          "processes). Modules that don't depend on each other also run side by side.", min=0, max=64),
+    Field("parallel_min_paragraphs", "Use processes above (paragraphs)", "int", 3000, "system", S_PROCESSING,
+          "Smaller batches of new paragraphs run in threads (no process start-up cost).", min=0, max=1_000_000, step=500),
     # --------------------------------------------------------- graph content
     Field("include_conversation_nodes", "Conversation nodes", "bool", True, "graph", S_GRAPH),
     Field("include_system", "System messages", "bool", False, "graph", S_GRAPH),
@@ -201,34 +140,28 @@ SCHEMA: list[Field] = [
           "Click an underlined word to jump to its node."),
     Field("collapse_tool_results", "Collapse long tool results", "bool", True, "view", S_PANEL),
     Field("panel_width", "Panel width (px)", "int", 440, "view", S_PANEL, min=280, max=1200, step=10),
-    # ------------------------------------------------------------ security
-    Field("sec_enabled", "Security analysis", "bool", True, "graph", S_SECURITY,
-          "Flag exfiltration, downloads, exposed secrets, sensitive-file access and destructive commands."),
-    Field("sec_dataflow", "Dataflow chains", "bool", True, "graph", S_SECURITY,
-          "Link source → action → sink within a tool call (e.g. a file leaving to a domain)."),
-    Field("sec_secrets", "Secret scanning", "bool", True, "graph", S_SECURITY,
-          "Detect private keys, cloud keys, tokens and password assignments in text, arguments and output."),
-    Field("sec_scan_results", "Scan tool output for secrets", "bool", True, "graph", S_SECURITY,
-          "Also scan command/tool output, not just prompts and arguments."),
-    Field("sec_sensitive_paths", "Sensitive-file access", "bool", True, "graph", S_SECURITY,
-          "Flag reads of credential locations such as /etc/shadow, ~/.ssh/id_rsa, .aws/credentials, .env."),
-    Field("sec_risky_ops", "Risky / destructive operations", "bool", True, "graph", S_SECURITY,
-          "Flag recursive deletes, disk overwrites, DROP/TRUNCATE, force pushes and history/log clearing."),
-    Field("sec_min_severity", "Minimum severity", "select", "low", "graph", S_SECURITY,
-          "Hide findings below this severity.", options=SEVERITIES),
-    Field("security_watchlist", "Analyst watchlist", "textarea",
-          "# one per line:  Label: <regex>    (optional [severity] prefix)\n"
-          "# [high] Data staging: base64\s+-d\n"
-          "# [medium] Package install: \bpip\s+install\b\n",
-          "graph", S_SECURITY,
-          "Your own terms or patterns to flag. Matched (case-insensitive) against every message, argument and result."),
 ]
 
 # Colour overrides for every node type / category
 for _k in NODE_TYPES + CATEGORIES:
     SCHEMA.append(Field(f"color.{_k.key}", _k.label, "color", _k.color, "view", S_COLORS))
 
+
+def _module_fields() -> list[Field]:
+    from .modules import registry, switch_field
+
+    out: list[Field] = []
+    for cls in registry().values():
+        sw = switch_field(cls)
+        if sw is not None:
+            out.append(sw)
+        out.extend(cls.options)
+    return out
+
+
+SCHEMA.extend(_module_fields())
 SCHEMA_BY_KEY = {f.key: f for f in SCHEMA}
+assert len(SCHEMA_BY_KEY) == len(SCHEMA), "duplicate settings key"
 
 
 def defaults() -> dict[str, Any]:
@@ -252,6 +185,8 @@ def coerce(key: str, value: Any) -> Any:
         return value if value in f.options else f.default
     if f.type == "color":
         return value if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{3,8}", value) else f.default
+    if isinstance(value, (list, tuple)) and f.type in ("hidden", "lists", "textarea"):
+        value = "\n".join(str(v) for v in value)
     return "" if value is None else str(value)
 
 

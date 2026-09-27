@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 import gzip
+import io
 import json
+import re
 from importlib import resources
 from pathlib import Path
 
@@ -14,6 +17,9 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .graph.export import subgraph, to_graphml, to_pyvis_html
 from .harnesses import all_parsers
+from .modules import registry
+from .modules.ioc import LIST_SUFFIXES
+from .modules.runner import module_stats
 from .nlp.pipeline import installed_models
 from .store import Workspace
 
@@ -59,6 +65,102 @@ def create_app(workspace: Workspace) -> FastAPI:
     @app.get("/api/status")
     def status() -> dict:
         return {**ws().status.to_json(), "datasets": len(ws().datasets)}
+
+    # ----------------------------------------------------------- modules
+    @app.get("/api/modules")
+    def modules() -> dict:
+        w = ws()
+        steps = {s["name"]: s for s in (w.status.steps or w.last_run.get("steps", []))}
+        mods = module_stats(w.db, w.settings.values)
+        for m in mods:
+            m["last_run"] = steps.get(m["name"])
+        return {"modules": mods, "paragraphs": len(w.paragraphs), "database": str(w.dir / "synthsift.duckdb")}
+
+    @app.get("/api/enrichment/{pid:path}")
+    def enrichment(pid: str) -> dict:
+        out = ws().enrichment(pid)
+        if out is None:
+            raise HTTPException(404, "unknown paragraph")
+        return out
+
+    @app.get("/api/modules/{name}/export")
+    def export_module(name: str, table: str | None = None) -> Response:
+        cls = registry().get(name)
+        if cls is None or not cls.tables:
+            raise HTTPException(404, "unknown module")
+        tbl = next((t for t in cls.tables if t.name == (table or cls.tables[0].name)), None)
+        if tbl is None or tbl.name not in ws().db.tables():
+            raise HTTPException(404, "no such table (has the module run?)")
+        cols = ", ".join(f'x."{c}"' for c in tbl.names if c != "para_hash")
+        join = "para_hash" in tbl.names
+        sql = (f'SELECT p.id AS paragraph, p.conv, p.event, {cols} FROM "{tbl.name}" x JOIN paragraphs p ON p.hash = x.para_hash '
+               "ORDER BY p.conv, p.seq" if join else f'SELECT {cols} FROM "{tbl.name}" x')
+        buf = io.StringIO()
+        cur = ws().db.con.execute(sql)
+        w = csv.writer(buf)
+        w.writerow([d[0] for d in cur.description])
+        for row in cur.fetchall():
+            w.writerow(["|".join(map(str, v)) if isinstance(v, list) else v for v in row])
+        return Response(buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="synthsift-{tbl.name}.csv"'})
+
+    # ------------------------------------------------------------- lists
+    def _lists() -> list[dict]:
+        w = ws()
+        disabled = {x.strip() for x in str(w.settings.values.get("ioc_disabled", "")).splitlines() if x.strip()}
+        note = w.db.get_state("note:ioc")
+        loaded = {d["file"]: d["entries"] for d in (json.loads(note).get("lists", []) if note else [])}
+        out = []
+        if w.lists_dir.is_dir():
+            for f in sorted(w.lists_dir.iterdir()):
+                if f.is_file():
+                    out.append({"name": f.name, "bytes": f.stat().st_size, "enabled": f.name not in disabled,
+                                "entries": loaded.get(f.name)})
+        return out
+
+    def _list_changed() -> None:
+        if ws().settings.values.get("mod.ioc"):
+            ws().schedule("enrich")
+
+    @app.get("/api/lists")
+    def get_lists() -> dict:
+        return {"lists": _lists()}
+
+    @app.post("/api/lists")
+    async def upload_lists(files: list[UploadFile] = File(...)) -> dict:
+        ws().lists_dir.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(f.filename or "list.txt").name).lstrip(".") or "list.txt"
+            if not name.lower().removesuffix(".gz").endswith(LIST_SUFFIXES):
+                raise HTTPException(400, f"{name}: lists must be {', '.join(LIST_SUFFIXES)} (optionally .gz)")
+            dest = ws().lists_dir / name
+            tmp = dest.with_name(dest.name + ".part")
+            with tmp.open("wb") as out:  # stream: lists can be hundreds of megabytes
+                while chunk := await f.read(4 << 20):
+                    out.write(chunk)
+            tmp.replace(dest)
+        _list_changed()
+        return {"lists": _lists()}
+
+    @app.delete("/api/lists/{name}")
+    def delete_list(name: str) -> dict:
+        path = ws().lists_dir / Path(name).name
+        if not path.is_file():
+            raise HTTPException(404, "unknown list")
+        path.unlink()
+        _list_changed()
+        return {"lists": _lists()}
+
+    @app.put("/api/lists/{name}")
+    async def toggle_list(name: str, request: Request) -> dict:
+        body = await request.json()
+        name = Path(name).name
+        disabled = [x for x in str(ws().settings.values.get("ioc_disabled", "")).splitlines() if x.strip() and x != name]
+        if not body.get("enabled", True):
+            disabled.append(name)
+        if ws().settings.update({"ioc_disabled": "\n".join(disabled)}):
+            _list_changed()
+        return {"lists": _lists()}
 
     @app.get("/api/graph")
     def graph(request: Request) -> Response:
@@ -113,6 +215,7 @@ def create_app(workspace: Workspace) -> FastAPI:
             "schema": s.schema_json(),
             "values": s.values,
             "installed_models": installed_models(),
+            "modules": [cls.info() for cls in registry().values()],
             "harnesses": [
                 {"name": p.name, "label": p.label, "aliases": list(p.aliases), "implemented": p.implemented,
                  "description": p.description}
@@ -124,8 +227,10 @@ def create_app(workspace: Workspace) -> FastAPI:
     async def put_settings(request: Request) -> dict:
         changes = await request.json()
         scopes = ws().settings.update(changes)
-        if "parse" in scopes:
-            ws().schedule("analyze")
+        if "segment" in scopes:
+            ws().schedule("segment")
+        elif "parse" in scopes:
+            ws().schedule("enrich")
         elif "graph" in scopes:
             ws().schedule("graph")
         return {"values": ws().settings.values, "scopes": sorted(scopes)}
@@ -133,7 +238,7 @@ def create_app(workspace: Workspace) -> FastAPI:
     @app.post("/api/settings/reset")
     def reset_settings() -> dict:
         ws().settings.reset()
-        ws().schedule("analyze")
+        ws().schedule("segment")
         return {"values": ws().settings.values}
 
     # ------------------------------------------------------- annotations

@@ -22,7 +22,7 @@ def _serve(args: argparse.Namespace) -> None:
         p = Path(z)
         if p.name not in existing:
             ws.add_zip(p.name, p.read_bytes())
-    if ws.datasets:
+    if any(not d.ingested for d in ws.datasets.values()):
         ws.schedule("ingest")
     url = f"http://{args.host}:{args.port}"
     print(f"SynthSift running at {url}  (data dir: {ws.dir})", file=sys.stderr)
@@ -54,6 +54,7 @@ def _build(args: argparse.Namespace) -> None:
         if args.graphml:
             Path(args.graphml).write_bytes(to_graphml(ws.graph))
             print(f"wrote {args.graphml}", file=sys.stderr)
+        ws.close()
 
 
 def _harnesses(_: argparse.Namespace) -> None:
@@ -82,7 +83,7 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("serve", parents=[common], help="run the web UI (default)")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
-    s.add_argument("--data-dir", default=".synthsift", help="where uploads and settings are kept")
+    s.add_argument("--data-dir", default=".synthsift", help="where uploads, settings and the database are kept")
     s.add_argument("--load", nargs="*", metavar="ZIP", help="zip(s) to load on start")
     s.add_argument("--open", action="store_true", help="open a browser tab")
     s.set_defaults(func=_serve)

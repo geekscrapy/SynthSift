@@ -19,6 +19,14 @@ and lets you **tag and comment** on sessions, turns and terms. Two full-page
 views sit next to the graph: **Nodes**, a sortable, filterable table of every
 node, and **Timeline**, everything tagged plus the findings, row by row.
 
+Every enrichment step is a **module** that stores its results per paragraph in
+its own table of a persistent **DuckDB** database: pattern extraction, spaCy,
+**IOC and keyword lists** (millions of lines), text features, content-type
+labels and the security findings. Modules run in parallel where they don't
+depend on each other, only new paragraphs are processed, and changing a
+module's options re-runs just that module and what depends on it. Writing a
+new one is a single file (see [Writing an enrichment module](#writing-an-enrichment-module)).
+
 ![Overview](docs/overview.jpg)
 
 <table>
@@ -43,8 +51,12 @@ uv run synthsift harnesses                  # list transcript parsers
 ```
 
 `uv run` creates the environment on first use, including the small English
-spaCy model. Uploads and settings are kept in `./.synthsift/` (`--data-dir` to
-change).
+spaCy model. Uploads, settings, IOC lists and the database
+(`synthsift.duckdb`) are kept in `./.synthsift/` (`--data-dir` to change).
+Restarting the app loads the stored corpus and module results instead of
+recomputing them. While anything is processed, a loading screen shows each
+stage and every module's progress (full screen until there is a graph, then a
+card in the corner that you can minimise).
 
 ### Upload layout
 
@@ -403,7 +415,8 @@ where data moves rather than shipping a list of named tools:
 | **Sensitive resource access** | `/etc/shadow`, `~/.ssh/id_rsa`, `.aws/credentials`, `.env` | high |
 | **Destructive / data loss** | `rm -rf`, disk overwrite, `DROP TABLE`, recursive bucket delete, force push | medium to critical |
 | **Log / history clearing** | `history -c`, truncating `/var/log/*` | high |
-| **Watchlist** | your own patterns (Settings → Security analysis) | you choose |
+| **Watchlist** | your own patterns (Settings → Modules → Security analysis) | you choose |
+| **IOC / keyword list hit** | an entry of one of your lists (see below) | the entry's severity, or the list default |
 
 Only the command itself is analysed. Several things are treated as data and
 ignored, which keeps coding-agent logs quiet:
@@ -428,13 +441,51 @@ Analyst tags and comments are stored in `annotations.json` in the data
 directory (`GET/PUT/DELETE /api/annotations`, `POST/DELETE /api/tags`, JSON
 export).
 
+### IOC and keyword lists
+
+Settings → Modules → **IOC & keyword lists**: switch the module on, then drop
+list files on it (or name server-side files and globs for lists you'd rather
+not upload). Each list can be switched off or deleted on its own.
+
+- **Plain text**: one value per line, `#` comments.
+- **CSV / TSV** with a header: a `value` column (`indicator`, `ioc`,
+  `keyword`, … also work) plus optional `type`, `label` and `severity`.
+- `.gz` files are read directly. Millions of lines are fine.
+
+Every entry is normalised and typed: IPv4, CIDR range, domain, URL, email,
+hash, path or keyword (anything else, including multi-word phrases).
+Transcript text is refanged first, so `hxxp://bad[.]example` matches.
+A listed domain also matches its subdomains (a setting).
+
+Matching doesn't scan text once per indicator. The `ioc_tokens` step cuts every paragraph
+into the tokens an entry could equal (URLs and their hosts, emails and their
+domains, IPs, hashes, paths, parent domains, word n-grams up to 4 words). The
+lists are bulk-loaded into DuckDB, and one hash join plus a range join for CIDR
+blocks finds every hit. A 1-million-entry list matches a
+20,000-paragraph corpus in about 3 seconds, including loading the list.
+
+Hits label the entities they overlap: the entity gets a list-label chip on its
+node, in the Nodes table (with a *Lists* filter) and in the node details. A
+listed keyword that no other module picked up becomes an entity of its own.
+Labelled entities stay in the graph whatever their mention count, and every
+hit raises a security finding with the entry's severity (a setting).
+
 ## How it works (no LLM anywhere)
 
 ```
-zip ─► ingest ─► harness parser ─► normalized Conversation ─► segment ─► NLP ─► networkx graph ─► UI / pyvis
-        (path → host/user/harness)    (models.py)              (events +    (per paragraph,
-                                                                paragraphs)  cached)
+zip ─► ingest ─► harness parser ─► Conversation ─► segment ─► enrichment modules ─► networkx graph ─► UI / pyvis
+        (path → host/user/harness)   (models.py)     (turns +     (per paragraph, in parallel,
+                                                     paragraphs)   stored in DuckDB)
 ```
+
+Processing runs in four stages, and each change redoes only what it affects:
+
+| Stage | Does | Runs again when |
+|---|---|---|
+| **ingest** | parses each uploaded zip into conversations (stored as JSON) | a zip is added or removed (only that zip) |
+| **segment** | splits conversations into turns and paragraphs | new conversations, or a *segment* setting changes |
+| **enrich** | runs the enabled modules | new paragraphs (only those), or a module's options change (that module and its dependants) |
+| **graph** | builds the graph from the stored results | always; it takes a moment |
 
 1. **Harness parsers** (`src/synthsift/harnesses/`) turn each native format into
    pydantic models: `Conversation → Message(role) → Block(text | thinking | tool_call | tool_result)`.
@@ -443,7 +494,9 @@ zip ─► ingest ─► harness parser ─► normalized Conversation ─► se
    event is split into *paragraphs*, which are what the transcript panel shows
    and search highlights. Each tool argument gets its own paragraph, and fenced
    code is kept whole.
-3. **Extraction** (`nlp/pipeline.py`). Earlier sources win when spans overlap:
+3. **Enrichment modules** (`modules/`, see the table below). Entity extraction
+   is spread over several modules whose candidates the *entity resolver* merges.
+   Earlier sources win when spans overlap:
    1. *Regex patterns*: URLs, e-mails, IPv4/6 (+port/CIDR), MACs, file paths
       (Unix, Windows, relative, bare filenames), domains, hashes, UUIDs, CVEs,
       AWS ARNs and regions, versions, dates, error types, env vars and
@@ -463,6 +516,9 @@ zip ─► ingest ─► harness parser ─► normalized Conversation ─► se
       between entities. When the speaker acts ("read /etc/hosts"), the verb
       labels the message → entity edge.
 
+   6. *IOC / keyword lists* don't claim text. They label whatever entity they
+      overlap (see [IOC and keyword lists](#ioc-and-keyword-lists)).
+
    Tool results and code blocks get pattern-level analysis by default (fast,
    low noise). Settings can switch on full NLP for them.
 4. **Graph** (`graph/builder.py`):
@@ -480,6 +536,134 @@ zip ─► ingest ─► harness parser ─► normalized Conversation ─► se
    one file), and optional `cooccurs` and tool hubs.
    Entities are shared across conversations by default, which is what links
    separate sessions together.
+
+### Modules
+
+| Module | Kind | Scope | Tables | What it stores |
+|---|---|---|---|---|
+| Pattern extractors (`regex`) | extraction | paragraph | `x_regex` | regex matches as entity candidates |
+| spaCy NLP (`nlp`) | extraction | paragraph | `x_nlp`, `x_nlp_sents`, `x_nlp_svo` | vocabulary, NER and noun-phrase candidates; sentences; verb structure |
+| IOC & keyword lists (`ioc`, helper `ioc_tokens`) | extraction | corpus | `x_ioc`, `x_ioc_hits`, `x_ioc_tokens` | list hits (as entity labels) and their entries |
+| Entity resolver (`entities`, always on) | extraction | paragraph | `x_entities`, `x_relations` | the entities and relations the graph shows |
+| Text statistics (`text_stats`) | feature | paragraph | `f_text_stats` | length, words, lines, character mix, entropy, URL count |
+| Content type (`content_type`) | label | paragraph | `l_content_type` | prose / code / command / JSON / log / stack trace / diff / table, plus a *secret-like* flag |
+| Security analysis (`security`) | analysis | corpus | `a_findings` | the security findings |
+
+Settings → **Modules** has a card per module: an on/off switch, its options,
+which modules it runs after, its tables with row counts and a CSV download, how
+many paragraphs it has processed and how long the last run took. The **{ }**
+button on every turn in the transcript shows what each module stored for its
+paragraphs.
+
+<table>
+<tr>
+<td width="50%"><b>Modules in Settings</b>: switch, options, tables, progress<br><img src="docs/settings.jpg" alt="Settings page with a card per enrichment module"></td>
+<td width="50%"><b>IOC and keyword lists</b>: upload, switch off, delete<br><img src="docs/ioc-lists.jpg" alt="IOC module card with two uploaded lists"></td>
+</tr>
+<tr>
+<td><b>Loading screen</b>: every stage and module, live<br><img src="docs/loading.jpg" alt="Progress card listing the pipeline stages and modules"></td>
+<td><b>Inspect a turn</b>: every module's rows for its paragraphs<br><img src="docs/inspector.jpg" alt="Dialog with the rows each module stored for a paragraph"></td>
+</tr>
+</table>
+
+**How modules run** (`modules/runner.py`):
+- **In dependency order.** A module starts as soon as the modules it reads
+  have finished, so independent modules run side by side.
+- **Incrementally.** Rows are keyed by the paragraph's content hash, and each
+  module records which paragraphs it has processed (`module_done`), so it only
+  ever sees new ones.
+- **With fingerprints.** Each module has a fingerprint: its version, its
+  options, its dependencies' fingerprints and, for lists, the files' sizes and
+  times. When the fingerprint changes, the module's tables are rebuilt.
+- **In parallel.** Large batches (Settings → Processing) are cut into chunks
+  and run in worker processes. Each chunk's rows commit together with its
+  *done* markers, so an interrupted run resumes where it stopped.
+
+**The database** is an ordinary DuckDB file, so you can query it directly (with
+the app stopped, since only one process can open it for writing):
+
+```bash
+uv run python - <<'EOF'
+import duckdb
+con = duckdb.connect(".synthsift/synthsift.duckdb", read_only=True)
+print(con.sql("""SELECT p.conv, l.label, count(*) FROM paragraphs p
+                 JOIN l_content_type l ON l.para_hash = p.hash GROUP BY ALL ORDER BY 3 DESC LIMIT 10"""))
+EOF
+```
+
+Core tables: `datasets`, `conversations`, `events`, `paragraphs` (id,
+conversation, turn, `hash`), `para_text` (one row per distinct content) and
+`module_done`. Storage goes through a small interface (`db/base.py`), so another
+backend can be added next to `db/duckdb_store.py`.
+
+## Writing an enrichment module
+
+Drop a file into `src/synthsift/modules/`. Every module in that package is
+imported automatically, and its card, switch and options appear on the Settings
+page:
+
+```python
+"""Counts question marks – a toy feature module."""
+
+from ..db import table
+from ..fields import Field
+from .base import Module, register
+
+
+@register
+class QuestionsModule(Module):
+    name = "questions"                # also the settings switch: "mod.questions"
+    label = "Questions"
+    description = "How many questions each paragraph asks."
+    kind = "feature"                  # extraction | feature | label | analysis
+    version = "1"                     # bump when the same input gives different output
+    tables = (table("f_questions", "para_hash", ("questions", "int"), ("asks_user", "bool"),
+                    description="Question count per paragraph"),)
+    options = (
+        Field("questions_min", "Count from", "int", 1, "parse", "", "Ignore paragraphs with fewer.", min=1, max=10),
+    )
+
+    def process(self, paras, deps):   # runs on chunks of new paragraphs, possibly in worker processes
+        low = int(self.opt("questions_min", 1))
+        rows = []
+        for p in paras:               # p.hash, p.text, p.role, p.code, p.arg
+            n = p.text.count("?")
+            if n >= low:
+                rows.append((p.hash, n, p.role == "assistant"))
+        return {"f_questions": rows}
+```
+
+- **Rows** are tuples in column order with `para_hash` first. The runner
+  writes them, records the paragraphs as processed and never shows the
+  module those paragraphs again.
+- **`requires = ("nlp",)`** runs the module after `nlp`. `process()` then gets
+  that module's rows for the chunk as `deps.dicts("x_nlp_svo", p.hash)`.
+  Override `dependencies(enabled)` when what you need depends on which
+  modules are on.
+- **Entity candidates**: declare `span_table = "x_mine"` with
+  `tables = (span_table("x_mine"),)` and emit `(para_hash, start, end, text,
+  category, source, key_hint, literal, prio, ord, alt_group, alt_rank, labels)`.
+  The resolver merges them with the other modules' candidates. A lower `prio`
+  claims text first (regex 10, vocabularies 20–22, NER 30, noun phrases 40).
+  With `span_mode = "label"` the rows label what they overlap instead.
+- **Whole-corpus work** (joins, cross-paragraph analysis): set
+  `scope = "corpus"` and implement `run_corpus(ctx)`. Use `ctx.storage` for
+  SQL, `ctx.corpus()` for conversations, turns, paragraphs and entities (set
+  `needs_corpus = True`), and `ctx.progress()` / `ctx.note()` to report back.
+- **`setup()`** loads models once per process. `fingerprint_extra(ctx)` adds
+  outside state, such as files, to the fingerprint.
+- **To try it out**, run it against an in-memory database and inspect the
+  tables:
+
+```python
+from synthsift.db import open_storage
+from synthsift.modules.runner import Runner
+from synthsift.settings import defaults
+st = open_storage(None)                       # in-memory DuckDB
+# … insert rows into para_text (see tests/test_modules.py), then:
+print(Runner(st, {**defaults(), "mod.questions": True}).run()["steps"])
+print(st.query("SELECT * FROM f_questions LIMIT 5"))
+```
 
 ## Adding a harness
 
@@ -556,7 +740,7 @@ See `samples/transcripts/` for complete examples.
 ## Better entity recognition
 
 The bundled `en_core_web_sm` model is fast but makes mistakes. Install a larger
-model and select it under Settings → Extraction → spaCy model:
+model and select it under Settings → Modules → spaCy NLP → spaCy model:
 
 ```bash
 uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl
