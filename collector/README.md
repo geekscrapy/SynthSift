@@ -18,7 +18,12 @@ python3 synthsift_collect.py --list-agents              # show the glob lists in
 On Windows use `py -3 synthsift_collect.py …`, in an administrator prompt for
 `--all-users`.
 
-Then upload the zip in SynthSift, or run `synthsift serve --load <zip>`.
+Then upload the zip in SynthSift, or start SynthSift with it from the
+SynthSift folder (the collector prints this command with the zip's full path):
+
+```bash
+uv run synthsift serve --load /path/to/synthsift-collect-<host>-<time>.zip
+```
 
 | Option | Meaning |
 |---|---|

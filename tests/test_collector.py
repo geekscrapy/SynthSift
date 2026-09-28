@@ -157,6 +157,7 @@ def test_script_runs_standalone(tmp_path):
     run = subprocess.run([sys.executable, "-I", str(SCRIPT), "-o", str(out), "--host", "laptop"],
                          env=env, capture_output=True, text=True, check=True)
     assert "wrote" in run.stderr and out.is_file()
+    assert f"uv run synthsift serve --load {out.resolve()}" in run.stderr  # a command that works as pasted
     listing = subprocess.run([sys.executable, "-I", str(SCRIPT), "--list-agents"], env=env, capture_output=True,
                              text=True, check=True).stdout
     assert "openclaw:" in listing and "!*.lock" in listing
