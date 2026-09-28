@@ -45,13 +45,16 @@ new one is a single file (see [Writing an enrichment module](#writing-an-enrichm
 ```bash
 uv run synthsift --open                     # web UI on http://127.0.0.1:8765
 uv run synthsift serve --load samples/synthsift-samples.zip --open
+uv run --project ~/SynthSift synthsift serve --load my-collection.zip   # from any other folder
 uv run synthsift build my-transcripts.zip -o graph.html   # standalone pyvis HTML, no server
 python3 collector/synthsift_collect.py      # zip this machine's agent sessions (standalone, see collector/)
 uv run synthsift harnesses                  # list transcript parsers
 ```
 
 `uv run` creates the environment on first use, including the small English
-spaCy model. Uploads, settings, IOC lists and the database
+spaCy model. Run `synthsift` from inside the repository, or pass
+`--project <repo>` from anywhere else (paths such as `--load` stay relative to
+where you are). Uploads, settings, IOC lists and the database
 (`synthsift.duckdb`) are kept in `./.synthsift/` (`--data-dir` to change).
 Restarting the app loads the stored corpus and module results instead of
 recomputing them. While anything is processed, a loading screen shows each
