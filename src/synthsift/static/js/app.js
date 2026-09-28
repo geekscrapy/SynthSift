@@ -55,6 +55,8 @@
     popout: null,
     clusterMode: store.get("clusterMode", null),
     clusters: new Map(),
+    litClusters: new Set(),
+    litEdges: null,
     posCache: {},
   };
   // lookups and analyst tags / comments, shared with the Nodes and Timeline pages
@@ -298,7 +300,7 @@
     if (!S.currentConv || !S.convs.has(S.currentConv)) S.currentConv = S.convOrder.find((c) => !S.hiddenConvs.has(c)) || S.convOrder[0];
     if (S.search) runSearch(S.search.q, false);
     if (S.selected && S.nodes.has(S.selected)) selectNode(S.selected, { quiet: true });
-    else { S.selected = null; renderSelection(); renderPanel(); }
+    else clearSelection();
     if (wasBusy) {
       wasBusy = false;
       snack(`${plural(g.stats.conversations, "conversation")} · ${fmt(g.stats.nodes)} nodes · ${fmt(g.stats.edges)} edges`, null, 3500);
@@ -657,11 +659,6 @@
           label: labels === "all" && e.label ? e.label : undefined, font: { size: 10, color: GC.inkVariant, strokeWidth: 3, strokeColor: GC.surface } };
         if (e.thought) style.dashes = [3, 3];
     }
-    if (S.neighbors && !bigEdges() && !(S.neighbors.has(e.from) && S.neighbors.has(e.to) && (e.from === S.selected || e.to === S.selected))) {
-      const v = rgba(style.color.color, 0.08);
-      style.color = { color: v, highlight: v, hover: v, inherit: false };
-      style.label = undefined;
-    }
     if (bigEdges() && (e.type === "mention" || e.type === "cooccurs")) style.arrows = "";
     return { ...base, ...style };
   }
@@ -752,7 +749,7 @@
     });
     network.on("doubleClick", (p) => {
       if (!p.nodes.length) return;
-      if (network.isCluster(p.nodes[0])) { openClusterNode(p.nodes[0]); settleLayout(); renderStats(S.data && S.data.stats); return; }
+      if (network.isCluster(p.nodes[0])) { openClusterNode(p.nodes[0]); lightSelection(); settleLayout(); renderStats(S.data && S.data.stats); return; }
       network.focus(p.nodes[0], { scale: Math.max(1.2, network.getScale()), animation: { duration: 500 } });
     });
     network.on("hoverNode", (p) => (network.isCluster(p.node) ? clusterTip(p.node) : showNodeTip(p.node)));
@@ -761,6 +758,22 @@
     network.on("blurEdge", hideTip);
     network.on("dragStart", hideTip);
     network.on("zoom", hideTip);
+    // A selection dims every edge that does not touch the selected node. It is done on the canvas rather than by
+    // restyling the edge DataSet (seconds with 100k edges): vis draws all edges faint, then the lit ones are drawn
+    // again underneath what is already there.
+    network.on("beforeDrawing", (ctx) => { if (S.litEdges) ctx.globalAlpha = 0.08; });
+    network.on("afterDrawing", (ctx) => {
+      if (!S.litEdges) return;
+      const { edges, edgeIndices } = network.body;
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "destination-over";
+      for (const id of edgeIndices) {
+        const e = edges[id];
+        if (S.litEdges.has(id) && e.connected) { e.drawArrows(ctx); e.draw(ctx); }
+      }
+      ctx.restore();
+    });
     if (S.layout === "layers") applyLayout(true);
   }
 
@@ -770,9 +783,23 @@
     return { enabled: true, type: t, roundness: 0.35 };
   }
 
-  function restyleEdges(force = false) {
-    if (!edgesDS || (bigEdges() && !force)) return;
-    edgesDS.update(S.data.edges.map(edgeStyle));
+  function restyleEdges() {
+    if (edgesDS) edgesDS.update(S.data.edges.map(edgeStyle));
+  }
+  // What a selection keeps lit: the selected node's edges as vis draws them, and the neighbours. When a neighbour
+  // (or the selected node) is inside a cluster, the cluster and the cluster edge stand in for it.
+  function lightSelection() {
+    S.litClusters.clear();
+    S.litEdges = null;
+    if (!S.neighbors || !network) return;
+    let selEnd = S.selected;
+    for (const [cid, c] of S.clusters) {
+      if (c.members.has(S.selected)) selEnd = cid;
+      for (const id of S.neighbors) if (c.members.has(id)) { S.litClusters.add(cid); break; }
+    }
+    const lit = (end) => (S.clusters.has(end) ? S.litClusters.has(end) : S.neighbors.has(end));
+    const edges = network.body.nodes[selEnd] ? network.getConnectedEdges(selEnd) : [];
+    S.litEdges = new Set(edges.filter((id) => { const e = network.body.edges[id]; return lit(e.fromId === selEnd ? e.toId : e.fromId); }));
   }
 
   function setPhysics(on) {
@@ -944,6 +971,7 @@
     const mode = effectiveClusterMode();
     $("cluster-mode").closest(".mini-select").classList.toggle("active", mode !== "off");
     if (mode === "off") {
+      lightSelection();
       // clusters were just opened (e.g. a cluster was clicked): lay their members out
       if (settle && S.justUnclustered) settleLayout();
       S.justUnclustered = false;
@@ -977,7 +1005,7 @@
       }
       const color = mode === "conversation" ? (S.convs.get(g) || {}).color : hashColor(mode + ":" + g);
       const label = mode === "conversation" ? (S.convs.get(g) || {}).title || g : g;
-      S.clusters.set(id, { id, mode, key: g, label, color, count: set.size, convs, sev, tags: [...tags] });
+      S.clusters.set(id, { id, mode, key: g, label, color, count: set.size, members: set, convs, sev, tags: [...tags] });
       network.cluster({
         joinCondition: (opts) => set.has(opts.id),
         clusterNodeProperties: { id, shape: "custom", ctxRenderer: renderCluster, label, allowSingleNodeCluster: false,
@@ -985,6 +1013,7 @@
         clusterEdgeProperties: { color: { color: rgba(GC.outline, 0.5), inherit: false }, width: 1.2, smooth: smoothOption(), arrows: "" },
       });
     }
+    lightSelection();
     if (settle && (S.clusters.size || S.justUnclustered)) settleLayout();
     S.justUnclustered = false;
   }
@@ -1002,17 +1031,19 @@
     const c = S.clusters.get(id) || { label: id, count: 0, color: "#5F6368", mode: "conversation", tags: [] };
     const r = clusterRadius(c);
     const fs = (S.settings.font_size || 13) + 1;
+    const alpha = S.neighbors && !S.litClusters.has(id) ? 0.15 : 1;
     return {
       drawNode() {
         ctx.save();
+        ctx.globalAlpha = alpha;
         if (selected || hover) { ctx.beginPath(); ctx.arc(x, y, r + 6, 0, 2 * Math.PI); ctx.lineWidth = 3; ctx.strokeStyle = GC.primary; ctx.stroke(); }
         if (c.sev) { ctx.beginPath(); ctx.arc(x, y, r + 3, 0, 2 * Math.PI); ctx.lineWidth = 4; ctx.strokeStyle = SEV_COLOR[c.sev]; ctx.stroke(); }
         ctx.beginPath();
         ctx.arc(x, y, r, 0, 2 * Math.PI);
         ctx.fillStyle = c.color;
-        ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = alpha * 0.9;
         ctx.fill();
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = alpha;
         ctx.setLineDash([6, 4]);
         ctx.lineWidth = 2;
         ctx.strokeStyle = GC.surface;
@@ -1033,6 +1064,7 @@
       },
       drawExternalLabel() {
         ctx.save();
+        ctx.globalAlpha = alpha;
         const text = truncate(c.label, 36);
         ctx.font = `500 ${fs}px Roboto, sans-serif`;
         ctx.textAlign = "center";
@@ -1177,7 +1209,7 @@
       network.selectNodes([id]);
       if (focus) network.focus(id, { scale: Math.max(network.getScale(), 0.9), animation: { duration: 450 } });
     }
-    restyleEdges();
+    lightSelection();
     network && network.redraw();
     renderSelection();
     const occ = visibleOcc(n);
@@ -1198,7 +1230,7 @@
     if (S.search) S.matchSource = searchSource();
     else S.matchSource = null;
     network && network.unselectAll();
-    restyleEdges();
+    lightSelection();
     network && network.redraw();
     renderSelection();
     renderPanel();
@@ -1721,7 +1753,7 @@
     }
     S.search = { q, re, occ, byPara, nodeIds };
     $("q-result").textContent = `${plural(nodeIds.size, "node")} · ${plural(byPara.size, "paragraph")}`;
-    if (!S.selected || switchTab) { S.selected = null; S.neighbors = null; renderSelection(); restyleEdges(); S.matchSource = searchSource(); }
+    if (!S.selected || switchTab) { S.selected = null; S.neighbors = null; renderSelection(); lightSelection(); S.matchSource = searchSource(); }
     network && network.redraw();
     if (switchTab) setTab("matches"); else renderPanel();
   }
@@ -2078,7 +2110,7 @@
       S.theme = SS.applyTheme(cur === "auto" && next === SS.effectiveTheme("auto") ? "auto" : next);
       $("btn-theme").querySelector(".msi").textContent = S.theme === "dark" ? "light_mode" : "dark_mode";
       GC = graphColors();
-      restyleEdges(true);
+      restyleEdges();
       network && network.redraw();
     });
     $("btn-left").addEventListener("click", () => { const l = $("layout").classList.toggle("left-closed"); store.set("leftClosed", l); });
