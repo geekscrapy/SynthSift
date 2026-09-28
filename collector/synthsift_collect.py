@@ -7,6 +7,7 @@ to any machine and run there without installing SynthSift.
     python3 synthsift_collect.py                          # your own sessions
     sudo python3 synthsift_collect.py --all-users         # every home directory
     python3 synthsift_collect.py --agents claude_code --since-days 7 --dry-run
+    python3 synthsift_collect.py --target claude_code=/data/claude --target /mnt/img/home/bob
 
 What is collected comes from the glob lists in ``globs/<agent>.txt`` (one file
 per agent; the file name is the SynthSift parser the files are meant for).
@@ -40,7 +41,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Mapping, Optional, Tuple
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 VERSION = "1.0"
 HERE = Path(__file__).resolve().parent
@@ -157,29 +158,77 @@ def _mtime(path: Path) -> float:
     return max(t, wal.stat().st_mtime) if wal.is_file() else t
 
 
+def file_patterns(r: Rules) -> List[str]:
+    """The transcript file names an agent's glob list looks for (``*.jsonl``, ``state.db`` …)."""
+    return sorted({p.replace("\\", "/").rsplit("/", 1)[-1] for p in r.patterns})
+
+
+def _owner(path: Path) -> str:
+    try:
+        import pwd  # not on Windows
+
+        return pwd.getpwuid(path.stat().st_uid).pw_name
+    except (ImportError, KeyError, OSError):
+        return getpass.getuser()
+
+
+def targets(specs: Sequence[str], rules: List[Rules]) -> Tuple[List[Tuple[str, Path, bool]], List[Tuple[str, str, Path]]]:
+    """``--target`` values → (home directories to search like any other, (user, agent, folder) agent folders).
+
+    ``AGENT=DIR``: DIR holds that agent's transcripts, anywhere below it.  ``DIR``: a home directory
+    (a mounted disk, a restored backup …), searched with every agent's usual ``~/`` locations.
+    """
+    known = {r.agent for r in rules}
+    my_home = Path.home().resolve()
+    home_dirs: List[Tuple[str, Path, bool]] = []
+    agent_dirs: List[Tuple[str, str, Path]] = []
+    for spec in specs:
+        agent, sep, raw = spec.partition("=")
+        if not sep or agent not in known:
+            if sep and not os.path.exists(os.path.expanduser(spec)):
+                raise SystemExit(f"--target {spec}: '{agent}' is not an agent being collected "
+                                 f"({', '.join(sorted(known))})")
+            agent, raw = "", spec
+        path = Path(os.path.expanduser(raw))
+        if not path.is_dir():
+            raise SystemExit(f"--target {spec}: {path} is not a folder")
+        if agent:
+            agent_dirs.append((_owner(path), agent, path))
+        else:
+            mine = path.resolve() == my_home  # your own home: your ${VARIABLES} apply as usual
+            home_dirs.append((getpass.getuser() if mine else path.resolve().name, path, mine))
+    return home_dirs, agent_dirs
+
+
 def find(rules: List[Rules], who: List[Tuple[str, Path, bool]], env: Mapping[str, str] = os.environ,
-         since: Optional[float] = None) -> List[Match]:
+         since: Optional[float] = None, dirs: Sequence[Tuple[str, str, Path]] = ()) -> List[Match]:
+    """Files to collect from home directories (``who``) and agent folders (``dirs``, from ``--target``)."""
     out: List[Match] = []
+    seen = set()  # (agent, real path): the same file reached twice (two patterns, a symlink, a target) is kept once
+
+    def take(r: Rules, user: str, base: str, pattern: str, source: str) -> None:
+        for hit in sorted(glob.glob(os.path.join(base, pattern), recursive=True)):
+            path = Path(hit)
+            if not path.is_file() or any(fnmatch.fnmatch(path.name, x) for x in r.excludes):
+                continue
+            key = (r.agent, os.path.realpath(hit))
+            rel = os.path.relpath(hit, base).replace(os.sep, "/")
+            if key in seen or rel.startswith("../") or (since is not None and _mtime(path) < since):
+                continue
+            seen.add(key)
+            out.append(Match(r.agent, user, path, rel, base, source))
+
     for user, home, current in who:
         for r in rules:
-            seen = set()
             for pattern in r.patterns:
                 spec = expand(pattern, home, env, current)
-                if spec is None:
-                    continue
-                base, rest = spec
-                for hit in sorted(glob.glob(os.path.join(base, rest), recursive=True)):
-                    path = Path(hit)
-                    if not path.is_file() or any(fnmatch.fnmatch(path.name, x) for x in r.excludes):
-                        continue
-                    real = os.path.realpath(hit)
-                    if real in seen:
-                        continue  # the same file reached through two patterns or a symlink
-                    rel = os.path.relpath(hit, base).replace(os.sep, "/")
-                    if rel.startswith("../") or (since is not None and _mtime(path) < since):
-                        continue
-                    seen.add(real)
-                    out.append(Match(r.agent, user, path, rel, base, pattern))
+                if spec is not None:
+                    take(r, user, *spec, pattern)
+    by_agent = {r.agent: r for r in rules}
+    for user, agent, folder in dirs:
+        base = str(folder).rstrip("/\\") or "/"
+        for name in file_patterns(by_agent[agent]):
+            take(by_agent[agent], user, base, f"**/{name}", f"--target {agent}={folder}")
     return out
 
 
@@ -278,6 +327,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("-o", "--output", help="zip to write (default: synthsift-collect-<host>-<time>.zip)")
     ap.add_argument("--host", help="host name to file the transcripts under (default: this machine's)")
     ap.add_argument("--all-users", action="store_true", help="search every home directory, not just yours")
+    ap.add_argument("--target", action="append", default=[], metavar="[AGENT=]DIR",
+                    help="search here instead of the default locations (repeat for more folders): AGENT=DIR is a "
+                         "folder holding that agent's transcripts anywhere below it; a bare DIR is a home directory "
+                         "(e.g. a mounted disk). Add --all-users to search every home directory as well")
     ap.add_argument("--agents", help="comma-separated agents to collect (default: every glob list)")
     ap.add_argument("--since-days", type=float, help="only files changed in the last N days")
     ap.add_argument("--globs", default=str(DEFAULT_GLOBS), help="folder with the <agent>.txt glob lists")
@@ -293,17 +346,27 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"    {p}")
             for x in r.excludes:
                 print(f"    !{x}")
+            if r.patterns:
+                print(f"    --target {r.agent}=DIR finds: {', '.join(file_patterns(r))}")
         return 0
     host = args.host or default_host()
     since = time.time() - args.since_days * 86400 if args.since_days else None
-    matches = find(rules, homes(args.all_users), os.environ, since)
+    home_targets, agent_dirs = targets(args.target, rules)
+    who = homes(args.all_users) if args.all_users or not args.target else []
+    known = {h.resolve() for _, h, _ in who}
+    who += [t for t in home_targets if t[1].resolve() not in known]
+    matches = find(rules, who, os.environ, since, agent_dirs)
     if args.dry_run or not matches:
         for m in matches:
             print(f"{host}/{m.user}/{m.agent}/{m.rel}\t{m.path}")
         if not matches:
             print("nothing matched the glob lists in " + args.globs, file=sys.stderr)
-            if not args.all_users:
-                print("hint: --all-users searches every home directory (needs permission to read them)", file=sys.stderr)
+            if args.target:
+                print("hint: for a folder holding one agent's transcripts use --target AGENT=DIR "
+                      "(a bare DIR is searched as a home directory)", file=sys.stderr)
+            elif not args.all_users:
+                print("hint: --all-users searches every home directory (needs permission to read them); "
+                      "--target searches other folders", file=sys.stderr)
         return 0 if matches or args.dry_run else 1
     out = Path(args.output or f"synthsift-collect-{host}-{time.strftime('%Y%m%d-%H%M%S')}.zip")
     rep = write_zip(matches, out, host)

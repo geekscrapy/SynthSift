@@ -13,6 +13,8 @@ sudo python3 synthsift_collect.py --all-users -o ir.zip # every home directory
 python3 synthsift_collect.py --agents claude_code,openclaw --since-days 7
 python3 synthsift_collect.py --dry-run                  # list what would be taken
 python3 synthsift_collect.py --list-agents              # show the glob lists in use
+python3 synthsift_collect.py --target claude_code=/data/claude-logs --target openclaw=/srv/oc
+python3 synthsift_collect.py --target /mnt/image/home/bob   # a home directory somewhere else
 ```
 
 On Windows use `py -3 synthsift_collect.py …`, in an administrator prompt for
@@ -25,11 +27,33 @@ Then upload the zip in SynthSift.
 | `-o, --output` | zip to write (default `synthsift-collect-<host>-<time>.zip`) |
 | `--host` | host name to file everything under (default: this machine's name) |
 | `--all-users` | search every home directory (`/home/*`, `/Users/*`, `/root`, `C:\Users\*`) instead of just yours |
+| `--target [AGENT=]DIR` | search this folder instead of the default locations; repeat for more (see below) |
 | `--agents` | comma-separated agents to collect (default: every glob list) |
 | `--since-days N` | only files changed in the last N days |
 | `--globs DIR` | use another folder of glob lists |
 | `--dry-run` | print `zip path ⇥ source path` for every match and write nothing |
 | `--list-agents` | print the patterns each agent uses |
+
+## Transcripts somewhere else: `--target`
+
+By default the collector looks where each agent keeps its files. When they
+are somewhere else (a custom config folder, an export, a backup, a mounted
+disk), point it at one or more folders with `--target`, repeated as often as
+needed:
+
+- `--target AGENT=DIR`: DIR holds that agent's transcripts. Everything
+  below it is searched for the agent's transcript files, whatever the folder
+  layout. The files are the names at the end of its glob list, for example
+  `*.jsonl` for `claude_code`; `--list-agents` shows them. Paths in the zip
+  are relative to DIR, and the files are filed under the folder owner's
+  account.
+- `--target DIR`: DIR is a home directory, e.g. `/mnt/image/home/bob`. It
+  is searched with every agent's usual `~/…` locations and filed under the
+  folder's name (`bob`).
+
+With `--target`, only the targets are searched; add `--all-users` to search
+every home directory as well. `--agents`, `--since-days` and `--dry-run`
+apply to targets too.
 
 ## Glob lists: `globs/<agent>.txt`
 

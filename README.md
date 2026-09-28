@@ -104,6 +104,7 @@ SynthSift. It never modifies anything:
 python3 collector/synthsift_collect.py -o laptop.zip             # your own sessions on this machine
 sudo python3 collector/synthsift_collect.py --all-users -o ir.zip # every home directory (incident response)
 python3 collector/synthsift_collect.py --since-days 7 --dry-run   # list what would be taken
+python3 collector/synthsift_collect.py --target claude_code=/data/claude-logs   # transcripts kept somewhere else
 ```
 
 What it looks for is listed per agent in plain text glob files,

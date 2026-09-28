@@ -10,6 +10,7 @@ import time
 import zipfile
 from pathlib import Path
 
+import pytest
 import zstandard
 
 from synthsift.harnesses import get_parser
@@ -160,3 +161,61 @@ def test_script_runs_standalone(tmp_path):
     listing = subprocess.run([sys.executable, "-I", str(SCRIPT), "--list-agents"], env=env, capture_output=True,
                              text=True, check=True).stdout
     assert "openclaw:" in listing and "!*.lock" in listing
+
+
+def test_targets_in_non_default_locations(tmp_path):
+    home, con = fake_home(tmp_path)
+    con.close()
+    moved = tmp_path / "data" / "claude-backup" / "2026" / "proj"  # transcripts copied somewhere else
+    moved.mkdir(parents=True)
+    (moved / "s-7.jsonl").write_bytes(cc_jsonl(CC_ROWS))
+    (moved / "notes.txt").write_text("not a transcript")
+    oc = tmp_path / "srv" / "oc-state"
+    (oc / "a").mkdir(parents=True)
+    (oc / "a" / "old.jsonl").write_bytes(jsonl(oc_events()))
+    (oc / "a" / "old.jsonl.lock").write_text("{}")
+    rules = sc.load_rules(GLOBS)
+    assert sc.file_patterns(next(r for r in rules if r.agent == "claude_code")) == ["*.jsonl"]
+
+    who, dirs = sc.targets([f"claude_code={tmp_path / 'data'}", f"openclaw={oc}", str(home)], rules)
+    assert who == [("alice", home, False)] and [(a, p) for _, a, p in dirs] == [("claude_code", tmp_path / "data"),
+                                                                                 ("openclaw", oc)]
+    got = sc.find(rules, who, env={}, dirs=dirs)
+    owner = sc._owner(tmp_path / "data")
+    assert ("claude_code", owner, "claude-backup/2026/proj/s-7.jsonl") in {(m.agent, m.user, m.rel) for m in got}
+    assert ("openclaw", owner, "a/old.jsonl") in {(m.agent, m.user, m.rel) for m in got}  # the lock file is excluded
+    assert not any(m.rel.endswith((".txt", ".lock")) for m in got)
+    # a bare folder is a home directory: every agent's usual locations, filed under the folder's name
+    assert {m.agent for m in got if m.user == "alice"} == {"claude_code", "openclaw", "gemini", "hermes"}
+    # the same file reached as a target and through a home is collected once
+    twice = sc.find(rules, who, env={}, dirs=[("alice", "claude_code", home / ".claude")])
+    assert len([m for m in twice if m.path.name == "s-1.jsonl"]) == 1
+
+    with pytest.raises(SystemExit, match="not an agent being collected"):
+        sc.targets([f"nope={tmp_path}"], rules)
+    with pytest.raises(SystemExit, match="not a folder"):
+        sc.targets([str(tmp_path / "missing")], rules)
+
+
+def test_target_on_the_command_line(tmp_path):
+    home, con = fake_home(tmp_path)
+    con.close()
+    elsewhere = tmp_path / "exports"
+    elsewhere.mkdir()
+    (elsewhere / "s-9.jsonl").write_bytes(cc_jsonl(CC_ROWS))
+    env = {**os.environ, "HOME": str(home), "USER": "alice", "LOGNAME": "alice"}
+    for var in ("CLAUDE_CONFIG_DIR", "OPENCLAW_STATE_DIR", "GEMINI_CLI_HOME", "HERMES_HOME", "LOCALAPPDATA"):
+        env.pop(var, None)
+    dry = subprocess.run([sys.executable, "-I", str(SCRIPT), "--dry-run", "--host", "laptop",
+                          "--target", f"claude_code={elsewhere}"], env=env, capture_output=True, text=True, check=True)
+    lines = dry.stdout.splitlines()
+    # targets replace the default search: nothing from the home directory
+    assert len(lines) == 1 and lines[0].endswith(str(elsewhere / "s-9.jsonl"))
+    assert "/claude_code/s-9.jsonl\t" in lines[0]
+    out = tmp_path / "t.zip"
+    subprocess.run([sys.executable, "-I", str(SCRIPT), "-o", str(out), "--host", "laptop", "--target",
+                    f"claude_code={elsewhere}", "--target", str(home)], env=env, capture_output=True, text=True, check=True)
+    with zipfile.ZipFile(out) as zf:
+        manifest = list(csv.DictReader(io.StringIO(zf.read(sc.MANIFEST).decode())))
+    assert any(r["pattern"] == f"--target claude_code={elsewhere}" for r in manifest)
+    assert any(r["pattern"] == "~/.claude/./projects/**/*.jsonl" for r in manifest)
