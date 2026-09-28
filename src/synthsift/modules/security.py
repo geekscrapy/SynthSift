@@ -17,7 +17,7 @@ from ..nlp import security
 from .base import Module, register
 
 FINDINGS = table("a_findings", ("seq", "int"), "conv", "event", "category", "rule", "label", "severity", "detail", ("entities", "json"),
-                 ("chain", "json"), index=["conv"], description="One row per security finding")
+                 ("chain", "json"), "value", index=["conv"], description="One row per security finding")
 
 
 @register
@@ -28,7 +28,7 @@ class SecurityModule(Module):
                    "commands, watchlist matches and IOC list hits, with source → action → sink chains.")
     kind = "analysis"
     scope = "corpus"
-    version = "2"
+    version = "3"
     needs_corpus = True
     tables = (FINDINGS,)
     uses_settings = ("ioc_findings",)
@@ -65,7 +65,7 @@ class SecurityModule(Module):
         with st.transaction():
             st.delete("a_findings")
             st.insert(Batch.from_rows(FINDINGS, [(i, f.conv, f.event, f.category, f.rule, f.label, f.severity, f.detail,
-                                                  json.dumps(f.entities), json.dumps([list(c) for c in f.chain]))
+                                                  json.dumps(f.entities), json.dumps([list(c) for c in f.chain]), f.value)
                                                  for i, f in enumerate(findings)]))
         return len(findings)
 
@@ -89,7 +89,8 @@ class SecurityModule(Module):
                 ents = [m.key for m in analysis.get(p.id).mentions if m.start < e and s < m.end] if p.id in analysis else []
                 shown = p.text[s:e]
                 what = f"{kind} " if kind != "keyword" else ""
-                out.append(security.Finding(p.conv, p.event, "ioc", f"ioc.{lst}", f"List hit: {label}", sev,
+                out.append(security.Finding(p.conv, p.event, "keyword" if kind == "keyword" else "ioc", f"ioc.{lst}",
+                                            f"List hit: {label}", sev,
                                             f"{what}`{shown}` is on {lst}" + (f" ({value})" if value.lower() != shown.lower() else ""),
-                                            entities=ents))
+                                            entities=ents, value=value))
         return out

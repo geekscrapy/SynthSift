@@ -40,6 +40,8 @@ class HarnessParser(ABC):
     implemented: ClassVar[bool] = True
     #: one-line description of the on-disk format
     description: ClassVar[str] = ""
+    #: tool names whose calls start a sub-agent (counted as sub-agent calls on the dashboard)
+    subagent_tools: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self) -> None:
         #: other files from the same upload that belong to the one being parsed,

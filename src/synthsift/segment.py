@@ -13,7 +13,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .harnesses import get_parser
 from .models import Conversation
+
+#: bump when segmentation output changes, so stored turns and paragraphs are rebuilt
+VERSION = "2"
 
 _FENCE = re.compile(r"^```[^\n]*\n.*?^```[ \t]*$", re.S | re.M)
 
@@ -52,6 +56,7 @@ class Event:
     tool_call_id: str | None = None
     arguments: dict[str, Any] | None = None
     is_error: bool = False
+    subagent: bool = False  # a tool call that starts a sub-agent
     # tool_call: argument name -> paragraph id
     arg_paragraphs: dict[str, str] = field(default_factory=dict)
 
@@ -68,6 +73,8 @@ class Event:
             d["call_id"] = self.tool_call_id
         if self.is_error:
             d["error"] = 1
+        if self.subagent:
+            d["sub"] = 1
         return d
 
 
@@ -134,6 +141,8 @@ def segment(conv: Conversation, cfg: dict[str, Any]) -> tuple[list[Event], list[
     split_mode = cfg.get("paragraph_split", "blank_line")
     max_lines = int(cfg.get("max_paragraph_lines", 40))
     max_result = int(cfg.get("max_tool_result_chars", 20000))
+    parser = get_parser(conv.harness)
+    subagent_tools = set(parser.subagent_tools) if parser else set()
 
     def new_event(etype: str, label: str, turn: int, ts: str | None) -> Event:
         ev = Event(id=f"{conv.id}:e{len(events)}", conv=conv.id, seq=len(events), type=etype,
@@ -177,6 +186,7 @@ def segment(conv: Conversation, cfg: dict[str, Any]) -> tuple[list[Event], list[
                 name = block.tool_name or "tool"
                 ev = new_event("tool_call", f"{name} #{n}", turn, msg.timestamp)
                 ev.tool_name, ev.tool_call_id, ev.arguments = name, block.tool_call_id, block.arguments or {}
+                ev.subagent = name in subagent_tools
                 if ev.arguments:
                     for key, value in ev.arguments.items():
                         p = add_para(ev, _arg_text(str(key), value), code=not isinstance(value, str), arg=str(key))

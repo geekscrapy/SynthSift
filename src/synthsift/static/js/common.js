@@ -118,6 +118,39 @@ const SS = (() => {
     const d = new Date(ts);
     return isNaN(d) ? "Unknown date" : d.toLocaleDateString([], { weekday: "short", year: "numeric", month: "short", day: "numeric" });
   }
+  /** "Mar 3, 10:00 – 11:00" for a time window (either end may be empty) */
+  function fmtRange(from, to) {
+    const a = from ? new Date(from) : null, b = to ? new Date(to) : null;
+    const sameDay = a && b && a.toDateString() === new Date(b - 1).toDateString();
+    const end = b && sameDay ? b.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : b ? fmtTime(to) : "";
+    return a && b ? `${fmtTime(from)} – ${end}` : a ? `from ${fmtTime(from)}` : b ? `until ${fmtTime(to)}` : "";
+  }
+  /** ISO time <-> the local "YYYY-MM-DDTHH:MM" of a datetime-local input */
+  const isoToLocalInput = (iso) => {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const localInputToIso = (v) => (v && !isNaN(new Date(v)) ? new Date(v).toISOString() : "");
+
+  // The workspace scope shared by every page (and kept in localStorage "convFilter"): host, user, agent (harness),
+  // conversation and a time window (from / to, ISO times, "to" exclusive). Pages also accept these as URL parameters.
+  const SCOPE_KEYS = ["host", "user", "harness", "conv", "from", "to"];
+  const emptyScope = () => Object.fromEntries(SCOPE_KEYS.map((k) => [k, ""]));
+  /** scope values given in a page's URL (?from=…&to=…&host=…), or null */
+  function scopeFromURL(params) {
+    const patch = {};
+    for (const k of SCOPE_KEYS) if (params.has(k)) patch[k] = params.get(k);
+    return Object.keys(patch).length ? patch : null;
+  }
+  /** a page URL with scope and page parameters (empty values left out) */
+  function pageURL(path, params = {}) {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") q.set(k, Array.isArray(v) ? v.join(",") : v);
+    const s = q.toString();
+    return s ? `${path}?${s}` : path;
+  }
   /** a search box's pattern: /regex/flags, or plain text matched case-insensitively; null when empty or invalid */
   function makeRegex(q, global = false) {
     const m = q.match(/^\/(.+)\/([a-z]*)$/);
@@ -360,6 +393,37 @@ const SS = (() => {
     }
     const convVisible = (cid) => !G.hiddenConvs.has(cid) && convMatchesFilter(cid);
 
+    /* time window (filter.from / filter.to): turns outside it, and nodes seen only outside it, are out of scope */
+    let win = { key: null };
+    function windowState() {
+      const f = G.filter, key = `${f.from || ""}|${f.to || ""}|${G.events.size}`;
+      if (win.key !== key) {
+        win = { key, on: !!(f.from || f.to), lo: f.from ? Date.parse(f.from) : -Infinity, hi: f.to ? Date.parse(f.to) : Infinity, convs: null };
+      }
+      return win;
+    }
+    const windowOn = () => windowState().on;
+    function inWindow(ts) {
+      const w = windowState();
+      if (!w.on) return true;
+      const t = ts ? Date.parse(ts) : NaN;
+      return t >= w.lo && t < w.hi;
+    }
+    const eventVisible = (evId) => { const ev = G.events.get(evId); return !!ev && convVisible(ev.c) && inWindow(ev.ts); };
+    const paraVisible = (pid) => { const p = G.paras.get(pid); return !!p && eventVisible(p.e); };
+    function nodeInWindow(n) {
+      const w = windowState();
+      if (!w.on) return true;
+      if (n.type === "conversation") {
+        if (!w.convs) { w.convs = new Set(); for (const ev of G.events.values()) if (inWindow(ev.ts)) w.convs.add(ev.c); }
+        return w.convs.has(n.conv[0]);
+      }
+      if (n.type === "tool_arg") return inWindow((G.events.get(n.event) || {}).ts);
+      if (G.events.has(n.id)) return inWindow(G.events.get(n.id).ts);
+      if (n.occ && n.occ.length) return n.occ.some(([pid]) => inWindow((G.events.get((G.paras.get(pid) || {}).e) || {}).ts));
+      return true; // tool hubs stay while any of their calls is visible
+    }
+
     /* annotation targets */
     function targetOf(nodeId) {
       const n = G.nodes.get(nodeId);
@@ -534,7 +598,7 @@ const SS = (() => {
       meta ? el("div", { class: "f-meta" }, meta) : null);
 
     return {
-      kind, kindOf, kindGroup, avatarHTML, convMatchesFilter, convVisible,
+      kind, kindOf, kindGroup, avatarHTML, convMatchesFilter, convVisible, windowOn, inWindow, eventVisible, paraVisible, nodeInWindow,
       targetOf, annOf, tagsFor, tagInfo, nodeTags, seenRange, labelFor, convFor, tsFor,
       loadAnnotations, putAnnotation, toggleTag, newTag, tagChipsHTML, openTagMenu, tagEditor,
       endpointLabel, chainEl, findingWhere, findingCard,
@@ -543,7 +607,7 @@ const SS = (() => {
 
   return {
     store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips,
-    fmt, plural, secs, fmtTime, fmtDay, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
+    fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
     SEV_ORDER, SEV_COLOR, sevRank, worstSeverity, STRUCTURAL, KIND_GROUPS, LAYERS, ROLE_ICON, kindKey, loadKinds, model,
   };
 })();

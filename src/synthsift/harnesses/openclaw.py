@@ -184,6 +184,8 @@ def events_to_conversation(rows: list[dict[str, Any]], meta: dict[str, Any] | No
 
     if not any(m.role in ("user", "assistant", "tool") for m in messages):
         return None
+    if info.get("spawned_by") or info.get("parent_session_key") or ":subagent:" in str(info.get("session_key", "")):
+        info["subagent"] = True
     conv = Conversation(messages=messages, started_at=info.get("started_at") or started,
                         model=Counter(models).most_common(1)[0][0] if models else info.get("model"),
                         meta={k: v for k, v in info.items() if v not in (None, "")})
@@ -201,6 +203,7 @@ class OpenClawParser(HarnessParser):
     name = "openclaw"
     label = "OpenClaw"
     aliases = ("open-claw", "open_claw", "clawdbot", "moltbot", ".openclaw", ".clawdbot", ".moltbot")
+    subagent_tools = ("sessions_spawn",)
     description = "OpenClaw agent sessions: per-agent openclaw-agent.sqlite, legacy sessions/*.jsonl and archives."
 
     def sniff(self, raw: bytes, filename: str) -> float:

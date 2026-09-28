@@ -193,6 +193,7 @@ class ExampleParser(HarnessParser):
     name = "example"
     label = "Example / generic chat JSON"
     aliases = ("generic", "openai", "chat", "synthsift")
+    subagent_tools = ("Task", "Agent", "spawn_agent", "sessions_spawn")
     description = "SynthSift reference format; also reads OpenAI chat and Anthropic Messages style logs."
 
     def parse(self, raw: bytes, filename: str) -> list[Conversation]:

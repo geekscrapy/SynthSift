@@ -1,6 +1,11 @@
 /* Nodes page: every node of the analysed graph in one sortable, filterable,
- * taggable table with a detail pane. The conversation scope, tag filter and
- * "hide ignored" are shared with the graph page; the rest is remembered per page.
+ * taggable table with a detail pane. The conversation scope, time window, tag
+ * filter and "hide ignored" are shared with the other pages; the rest is
+ * remembered per page.
+ *
+ * URL parameters (the dashboard's links): the shared scope (from, to, host, …) and
+ * kinds=<node types / categories to show>, lists=<list labels or *>, cats=<finding categories>,
+ * sev=<minimum severity>, q=<search>, select=<node id>.
  */
 "use strict";
 
@@ -122,10 +127,13 @@
     const kindCounts = new Map(), layerCounts = new Map(), catCounts = new Map(), listCounts = new Map();
     const rows = [];
     let total = 0;
+    const windowed = WS.windowOn();
     for (const n of W.nodes.values()) {
       if (!WS.nodeVisible(n)) continue;
       total++;
-      const m = meta.get(n.id);
+      let m = meta.get(n.id);
+      // with a time window, entities count their mentions inside it
+      if (windowed && n.type === "entity") m = { ...m, mentions: (n.occ || []).filter(([pid]) => WS.paraVisible(pid)).length };
       const tags = WS.nodeTags(n.id);
       if (W.hideIgnored && tags.includes("ignore") && !W.tagFilter.has("ignore")) continue;
       if (W.tagFilter.size && !tags.some((t) => W.tagFilter.has(t))) continue;
@@ -162,12 +170,33 @@
     return !!(P.q || P.hiddenKinds.size || P.hiddenLayers.size || P.tagMode !== "all" || P.minSev || P.secCats.size || P.lists.size || P.minMentions
       || WS.scopeActive());
   }
-  function resetFilters() {
+  function resetPageFilters() {
     P.q = ""; $("q").value = "";
     P.hiddenKinds.clear(); P.hiddenLayers.clear(); P.tagMode = "all"; P.minSev = ""; P.secCats.clear(); P.lists.clear(); P.minMentions = 0;
-    $("min-mentions").value = 0;
+    $("min-mentions").value = 0; $("min-sev").value = "";
     save();
+  }
+  function resetFilters() {
+    resetPageFilters();
     WS.resetScope();
+  }
+  /** a dashboard link: only the page filters it names apply */
+  function filtersFromURL(params) {
+    if (!["kinds", "lists", "cats", "sev", "q"].some((k) => params.has(k))) return;
+    resetPageFilters();
+    const list = (k) => (params.get(k) || "").split(",").filter(Boolean);
+    if (params.has("kinds")) {
+      const show = new Set(list("kinds"));
+      for (const m of meta.values()) if (!show.has(m.kind.key)) P.hiddenKinds.add(m.kind.key);
+    }
+    if (params.has("lists")) {
+      const all = params.get("lists") === "*";
+      P.lists = new Set(all ? [...W.nodes.values()].flatMap((n) => n.labels || []) : list("lists"));
+    }
+    if (params.has("cats")) P.secCats = new Set(list("cats"));
+    if (params.has("sev")) { P.minSev = params.get("sev"); $("min-sev").value = P.minSev; }
+    if (params.has("q")) { P.q = params.get("q"); $("q").value = P.q; }
+    save();
   }
 
   /* ----------------------------------------------------------------- rail */
@@ -445,8 +474,9 @@
       snack("Could not load the workspace: " + e.message);
     }
     buildMeta();
-    const params = new URLSearchParams(location.search);
-    if (params.get("q") !== null) { P.q = params.get("q"); $("q").value = P.q; }
+    const params = WS.scopeFromURL();
+    filtersFromURL(params);
+    history.replaceState(null, "", location.pathname);
     render();
     const sel = params.get("select");
     if (sel) {

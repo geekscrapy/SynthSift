@@ -246,9 +246,13 @@ class Runner:
             cls, step = self.reg[n], self.steps[n]
             step.state, step.started = "running", time.time()
             if cls.scope == "corpus":
-                if self.storage.get_state(f"fp:{n}") == f"{fps[n]}:{sig}" and not any(d in self.changed for d in self.deps[n]):
+                stored = self.storage.get_state(f"fp:{n}") or ""
+                if stored == f"{fps[n]}:{sig}" and not any(d in self.changed for d in self.deps[n]):
                     self._finish(n, "cached", finished)
                     return
+                if stored.split(":", 1)[0] != fps[n]:  # new version or options: its tables are rebuilt
+                    for t in cls.tables:
+                        self.storage.drop(t.name)
                 step.message = "Starting"
                 futures[threads.submit(self._run_corpus, n, source)] = (n, None)
                 return

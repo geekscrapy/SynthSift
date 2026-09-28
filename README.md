@@ -15,9 +15,11 @@ exact words in the transcript.
 For security analysts it also flags **data leaving the host, downloads, exposed
 secrets, sensitive-file access and destructive commands**, draws them as
 `source → action → sink` chains (e.g. `/tmp/prod.sql.gz → s3://public-bucket`),
-and lets you **tag and comment** on sessions, turns and terms. Two full-page
-views sit next to the graph: **Nodes**, a sortable, filterable table of every
-node, and **Timeline**, everything tagged plus the findings, row by row.
+and lets you **tag and comment** on sessions, turns and terms. Three full-page
+views sit next to the graph: a **Dashboard** with activity over time and the
+long tail of rare terms, list hits and tools; **Nodes**, a sortable, filterable
+table of every node; and **Timeline**, everything tagged plus the findings, row
+by row.
 
 Every enrichment step is a **module** that stores its results per paragraph in
 its own table of a persistent **DuckDB** database: pattern extraction, spaCy,
@@ -291,10 +293,59 @@ messages are also appended to `sessions/<session-id>.jsonl`.
 
 ## Using the UI
 
-The top bar switches between three pages: **Graph**, **Nodes** and **Timeline**.
-They share the host / user / agent / conversation filters, the tag filter, *Hide
-ignored*, and all tags and comments. A change on one page shows up at once on
-the others, including in other tabs.
+The top bar switches between four pages: **Dashboard**, **Graph**, **Nodes** and
+**Timeline**. They share the host / user / agent / conversation filters, the
+**time window**, the tag filter, *Hide ignored*, and all tags and comments. A
+change on one page shows up at once on the others, including in other tabs.
+
+The time window (*From* / *To* in the side rail, or the clock chip on the graph
+page) limits every page to the turns inside it: the graph keeps the turns and
+the terms mentioned in them, the Nodes table counts mentions inside it, and the
+Timeline and Security lists keep what happened in it. The pages also take the
+window and filters as URL parameters, which is how the dashboard's links work:
+`/?from=…&to=…&select=<node>`, `/nodes?kinds=tool_call&q=…&lists=*`,
+`/timeline?kinds=finding&cats=ioc,keyword`. Times are ISO 8601; `to` is
+exclusive.
+
+### Dashboard (`/dashboard`)
+
+The corpus at a glance, for the scope and time window you have set.
+
+- **Key figures**: conversations (with host, user and agent counts), events,
+  tool calls, sub-agent calls, IOC hits, keyword hits, findings, terms and
+  concepts, and how many terms and concepts were seen only once.
+- **Over time**: one column chart per measure on a shared time axis. The
+  measures are all events; IOC & keyword hits (IOC lists, keyword lists and the
+  watchlist); tool calls; and sub-agent calls (tool calls that start a
+  sub-agent: Claude Code's `Task` / `Agent`, OpenClaw's `sessions_spawn`).
+  - Pick the **time slice**, from one minute to 30 days. *Auto* aims for about
+    60 bars.
+  - Presets cover the last day, 7 days or 30 days of the data.
+  - A **log scale** keeps quiet slices visible next to a busy one.
+  - Hovering shows every measure for that slice, and *Show as table* lists them.
+- **Long tail**: the **rarest** terms, concepts, IOC & keyword hits and tools
+  first, since the unusual tends to hide at the bottom. Switch to *Most
+  common* for the top of the list. Each row shows its count, conversations,
+  first sighting and a strip of when it occurs, and the top search filters the
+  lists.
+- **Everything is a link**, and each opens its view with the filter applied:
+  - A bar opens that slice: events in the graph, list hits on the Timeline, tool
+    and sub-agent calls on the Nodes page. A segment of a stacked bar opens just
+    that kind.
+  - A term or concept is selected in the graph, with a shortcut to its row on
+    the Nodes page.
+  - A list hit opens its findings on the Timeline, and a tool opens its calls on
+    the Nodes page.
+  - Each key figure opens the matching list.
+- **Drag across the charts** to narrow the time window. It then applies on every
+  page, and the dashboard zooms in with finer slices.
+
+<table>
+<tr>
+<td width="50%"><b>Activity over time</b>: log scale, hover readout<br><img src="docs/dashboard.jpg" alt="Dashboard with key figures and four column charts over time"></td>
+<td width="50%"><b>The long tail</b>: rarest terms, concepts, list hits and tools<br><img src="docs/dashboard-tail.jpg" alt="Long-tail tables with counts and when-strips"></td>
+</tr>
+</table>
 
 ### Graph
 
@@ -359,10 +410,10 @@ extracted terms.
   The *Columns* button hides or shows columns.
 - **Filter**
   - The top search matches names, and the text of turns (`/regex/` supported).
-  - The side rail filters by host, user, agent and conversation; tag chips
-    and *Hide ignored*; tagged, untagged or commented; findings severity and
-    category; layers; node types (shift-click for "only this type"); and a
-    minimum mention count for terms.
+  - The side rail filters by host, user, agent, conversation and time window;
+    tag chips and *Hide ignored*; tagged, untagged or commented; findings
+    severity and category; IOC / keyword lists; layers; node types (shift-click
+    for "only this type"); and a minimum mention count for terms.
 - **Tag**
   - Right-click a row to tag it or comment on it.
   - Check rows (shift-click for a range, or use the header box for the whole
@@ -387,8 +438,8 @@ Every tagged session, turn and term, plus the security findings, in time order,
 row by row and grouped by day.
 
 - **Filter** by row kind (sessions / turns / terms / findings), by the shared
-  scope and tag filters, by comments only, by findings severity and category,
-  and by date range. Sort oldest or newest first.
+  scope, time window and tag filters, by comments only, and by findings
+  severity and category. Sort oldest or newest first.
 - **Tag** single rows or many at once, the same way as on the Nodes page.
 - **Detail pane**: a finding's `source → action → sink` chain, the turn's tags
   and comment, and the turn in context, with adjustable **# before / # after**.
@@ -417,7 +468,7 @@ where data moves rather than shipping a list of named tools:
 | **Destructive / data loss** | `rm -rf`, disk overwrite, `DROP TABLE`, recursive bucket delete, force push | medium to critical |
 | **Log / history clearing** | `history -c`, truncating `/var/log/*` | high |
 | **Watchlist** | your own patterns (Settings → Modules → Security analysis) | you choose |
-| **IOC / keyword list hit** | an entry of one of your lists (see below) | the entry's severity, or the list default |
+| **IOC / keyword list hit** | an entry of one of your lists (see below); indicators and keywords are separate categories | the entry's severity, or the list default |
 
 Only the command itself is analysed. Several things are treated as data and
 ignored, which keeps coding-agent logs quiet:
@@ -684,6 +735,7 @@ class MyAgentParser(HarnessParser):
     name = "myagent"                 # zip folder name
     aliases = ("my-agent",)
     label = "My Agent"
+    subagent_tools = ("delegate",)   # optional: tools whose calls start a sub-agent (dashboard)
 
     def parse(self, raw: bytes, filename: str) -> list[Conversation]:
         rows = self.load_jsonl(raw)

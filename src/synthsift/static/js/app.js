@@ -42,7 +42,7 @@
     textCache: new Map(),
     theme: "light",
     // analyst features
-    filter: { host: "", user: "", harness: "", conv: "", ...store.get("convFilter", {}) },
+    filter: { ...SS.emptyScope(), ...store.get("convFilter", {}) },
     annotations: {},
     tags: [],
     tagFilter: new Set(store.get("tagFilter", [])),
@@ -62,7 +62,8 @@
     onSaved: () => { afterAnnotationChange(); broadcast({ type: "annotations" }); },
     promptTag: async () => (prompt("New tag name") || "").trim().toLowerCase() || null, // the server adds unknown tags
   });
-  const { kind, kindOf, convMatchesFilter, convVisible, targetOf, annOf, tagsFor, tagInfo, nodeTags, loadAnnotations, tagChipsHTML, openTagMenu } = M;
+  const { kind, kindOf, convMatchesFilter, convVisible, windowOn, inWindow, paraVisible, nodeInWindow, targetOf, annOf, tagsFor, tagInfo, nodeTags,
+    loadAnnotations, tagChipsHTML, openTagMenu } = M;
   const chan = "BroadcastChannel" in window ? new BroadcastChannel("synthsift") : null;
   const WIN_ID = Math.random().toString(36).slice(2);
 
@@ -83,15 +84,17 @@
       snack("Could not load settings: " + e.message);
     }
     applyViewSettings();
+    const params = new URLSearchParams(location.search);
+    const scope = S.panelOnly ? null : SS.scopeFromURL(params); // a dashboard link
+    if (scope) { S.filter = { ...S.filter, ...scope }; store.set("convFilter", S.filter); }
     await loadAnnotations();
     await refresh();
     renderTagChips();
     pollStatus();
-    const params = new URLSearchParams(location.search);
-    if (!S.panelOnly && (params.get("select") || params.get("para"))) {
-      reveal(params.get("select"), params.get("para"));
-      history.replaceState(null, "", location.pathname);
-    }
+    if (scope) broadcast({ type: "filters", hiddenConvs: [...S.hiddenConvs], filter: S.filter });
+    if (!S.panelOnly && (params.get("select") || params.get("para"))) reveal(params.get("select"), params.get("para"));
+    else if (scope && windowOn()) showFirstInWindow();
+    if (!S.panelOnly && [...params.keys()].length) history.replaceState(null, "", location.pathname);
     if (S.panelOnly) {
       broadcast({ type: "hello" });
       window.addEventListener("beforeunload", () => broadcast({ type: "closed" }));
@@ -199,7 +202,7 @@
         case "closed": if (!S.panelOnly && S.popout) dockBack(); break;
         case "state":
           if (!S.panelOnly) break;
-          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = m.filter || S.filter;
+          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = { ...SS.emptyScope(), ...(m.filter || S.filter) };
           S.tagFilter = new Set(m.tagFilter || []); S.hideIgnored = !!m.hideIgnored;
           if (m.currentConv) S.currentConv = m.currentConv;
           applyFilters(); renderFilters(); renderTagChips();
@@ -209,7 +212,7 @@
         case "select": if (S.nodes.has(m.id)) selectNode(m.id, { focus: !S.panelOnly, quiet: !S.panelOnly }); break;
         case "search": $("q").value = m.q || ""; runSearch(m.q || "", S.panelOnly); break;
         case "filters":
-          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = { conv: "", ...(m.filter || S.filter) };
+          S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = { ...SS.emptyScope(), ...(m.filter || S.filter) };
           renderFilters(); afterConvToggle(); break;
         case "ping": // the Nodes / Timeline pages look for an open graph before opening a new one
           if (!S.panelOnly) { applyingRemote = false; broadcast({ type: "pong" }); }
@@ -341,6 +344,7 @@
     const vis = new Set();
     for (const n of S.nodes.values()) {
       if (n.conv && n.conv.length && !n.conv.some(convVisible)) continue;
+      if (!nodeInWindow(n)) continue;
       if (S.hiddenLayers.has(n.layer)) continue;
       if (S.hiddenKinds.has(kindKey(n))) continue;
       if (S.hideIgnored && nodeTags(n.id).includes("ignore")) continue;
@@ -1153,7 +1157,7 @@
 
   /* ========================================================= selection */
   function visibleOcc(n) {
-    return (n.occ || []).filter(([pid]) => { const p = S.paras.get(pid); return p && convVisible(p.c); });
+    return (n.occ || []).filter(([pid]) => paraVisible(pid));
   }
 
   function onClick(p) {
@@ -1417,7 +1421,7 @@
     const hitsByConv = new Map();
     for (const o of src.occ) {
       const p = S.paras.get(o[0]);
-      if (!p || !convVisible(p.c)) continue;
+      if (!p || !paraVisible(o[0])) continue;
       if (!hitsByConv.has(p.c)) hitsByConv.set(p.c, new Set());
       hitsByConv.get(p.c).add(S.paraPos.get(o[0]));
     }
@@ -1472,11 +1476,12 @@
 
   /* ========================================================== security */
   const ignored = (target) => tagsFor(target).includes("ignore");
+  const findingInScope = (f) => convVisible(f.conv) && inWindow((S.events.get(f.event) || {}).ts);
   function visibleFindings() {
     const fs = (S.data && S.data.findings) || [];
     const min = sevRank(S.secMinSev);
     return fs.map((f, i) => ({ ...f, i })).filter((f) =>
-      convVisible(f.conv) && sevRank(f.severity) >= min && (!S.secCats.size || S.secCats.has(f.category)) &&
+      findingInScope(f) && sevRank(f.severity) >= min && (!S.secCats.size || S.secCats.has(f.category)) &&
       !(S.hideIgnored && (ignored("event:" + f.event) || ignored("conv:" + f.conv))));
   }
   function renderSecurity() {
@@ -1486,9 +1491,9 @@
     const cats = (S.data && S.data.security && S.data.security.categories) || {};
     const shown = visibleFindings();
     const bySev = new Map();
-    for (const f of all) if (convVisible(f.conv)) bySev.set(f.severity, (bySev.get(f.severity) || 0) + 1);
+    for (const f of all) if (findingInScope(f)) bySev.set(f.severity, (bySev.get(f.severity) || 0) + 1);
     const catCounts = new Map();
-    for (const f of all) if (convVisible(f.conv)) catCounts.set(f.category, (catCounts.get(f.category) || 0) + 1);
+    for (const f of all) if (findingInScope(f)) catCounts.set(f.category, (catCounts.get(f.category) || 0) + 1);
     const toolbar = el("div", { class: "sec-toolbar" },
       el("div", { class: "sec-summary" }, [...SEV_ORDER].reverse().filter((sv) => bySev.get(sv)).map((sv) => el("button", {
         class: `chip sm sev-${sv}${S.secMinSev === sv ? " selected" : ""}`, title: `Show ${sv} and above`,
@@ -1545,8 +1550,9 @@
     if (cids.length && !cids.some(convVisible)) {
       const cid = cids[0];
       S.hiddenConvs.delete(cid);
-      setConvFilter(convMatchesFilter(cid) ? S.filter : { host: "", user: "", harness: "", conv: "" });
+      setConvFilter(convMatchesFilter(cid) ? S.filter : { ...S.filter, host: "", user: "", harness: "", conv: "" });
     }
+    if (n && !nodeInWindow(n)) setConvFilter({ ...S.filter, from: "", to: "" }); // outside the time window
     if (n && (S.hiddenLayers.has(n.layer) || S.hiddenKinds.has(kindKey(n)))) {
       S.hiddenLayers.delete(n.layer);
       S.hiddenKinds.delete(kindKey(n));
@@ -1559,6 +1565,13 @@
     else if (id && S.events.has(id)) jumpToEvent(id);
     else if (para && S.paras.has(para)) showPara(para);
     else snack("That item is not in the current graph (filtered or below the minimum mentions).");
+  }
+
+  /** open the transcript at the earliest visible turn of the time window */
+  function showFirstInWindow() {
+    let first = null;
+    for (const ev of S.events.values()) if (ev.ts && M.eventVisible(ev.id) && (!first || ev.ts < first.ts)) first = ev;
+    if (first) { S.currentConv = first.c; setTab("transcript", { scrollTo: first.p[0] }); }
   }
 
   function jumpToEvent(evId) {
@@ -1690,7 +1703,7 @@
     const occ = [];
     const byPara = new Map();
     for (const p of S.paras.values()) {
-      if (!convVisible(p.c)) continue;
+      if (!paraVisible(p.id)) continue;
       re.lastIndex = 0;
       let m, guard = 0;
       while ((m = re.exec(p.t)) && guard++ < 200) {
@@ -1876,6 +1889,9 @@
     if (f.conv && !S.convs.has(f.conv)) f.conv = "";
     chip.classList.toggle("hidden", !f.conv);
     if (f.conv) chip.querySelector(".label").textContent = S.convs.get(f.conv).title;
+    const time = $("f-time");
+    time.classList.toggle("hidden", !windowOn());
+    time.querySelector(".label").textContent = SS.fmtRange(f.from, f.to);
   }
 
   function runConvSearch(q) {
@@ -2169,6 +2185,7 @@
       renderStats(S.data && S.data.stats);
     });
     $("f-conv").addEventListener("click", () => clearClusterFocus("conversation"));
+    $("f-time").addEventListener("click", () => setConvFilter({ ...S.filter, from: "", to: "" }));
     $("btn-dock").addEventListener("click", (e) => { e.stopPropagation(); dockMenu(e.currentTarget); });
     $("popped-note").addEventListener("click", dockBack);
     window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

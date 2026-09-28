@@ -61,6 +61,10 @@ def create_app(workspace: Workspace) -> FastAPI:
     def timeline_page() -> FileResponse:
         return FileResponse(STATIC / "timeline.html")
 
+    @app.get("/dashboard", response_class=HTMLResponse)
+    def dashboard_page() -> FileResponse:
+        return FileResponse(STATIC / "dashboard.html")
+
     # -------------------------------------------------------------- data
     @app.get("/api/status")
     def status() -> dict:

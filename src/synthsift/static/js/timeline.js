@@ -1,6 +1,9 @@
 /* Timeline page: tagged sessions, turns and terms plus security findings,
- * row by row in time order and grouped by day. The conversation scope, tag
- * filter and "hide ignored" are shared with the graph page.
+ * row by row in time order and grouped by day. The conversation scope, time
+ * window, tag filter and "hide ignored" are shared with the other pages.
+ *
+ * URL parameters (the dashboard's links): the shared scope (from, to, host, …)
+ * and kinds=conv,event,term,finding, cats=<finding categories>, sev=<minimum>, q=<search>.
  */
 "use strict";
 
@@ -25,8 +28,6 @@
     minSev: store.get("timeline.minSev", ""),
     secCats: new Set(store.get("timeline.secCats", [])),
     commentedOnly: store.get("timeline.commentedOnly", false),
-    from: store.get("timeline.from", ""),
-    to: store.get("timeline.to", ""),
     page: 0,
     pageSize: store.get("timeline.pageSize", 250),
     hiddenCols: new Set(store.get("timeline.hiddenCols", ["agent"])),
@@ -36,7 +37,7 @@
     rows: [],
   };
   const save = () => {
-    for (const k of ["q", "order", "minSev", "commentedOnly", "from", "to", "pageSize"]) store.set("timeline." + k, P[k]);
+    for (const k of ["q", "order", "minSev", "commentedOnly", "pageSize"]) store.set("timeline." + k, P[k]);
     for (const k of ["kinds", "secCats", "hiddenCols"]) store.set("timeline." + k, [...P[k]]);
   };
 
@@ -93,9 +94,7 @@
       if (W.hideIgnored && !W.tagFilter.has("ignore") && ignored(r.tags, r.conv)) continue;
       if (W.tagFilter.size && !r.tags.some((t) => W.tagFilter.has(t))) continue;
       if (P.commentedOnly && !r.comment) continue;
-      const day = r.when ? r.when.slice(0, 10) : "";
-      if (P.from && (!day || day < P.from)) continue;
-      if (P.to && (!day || day > P.to)) continue;
+      if (r.kind !== "term" && !WS.inWindow(r.when)) continue; // terms: scopeOk checked where they were seen
       if (rx && !rx.test(searchText(r))) continue;
       if (r.kind === "finding") {
         for (const c of r.cats) catCounts.set(c, (catCounts.get(c) || 0) + 1);
@@ -116,14 +115,28 @@
   }
 
   function filtersActive() {
-    return !!(P.q || P.kinds.size < KINDS.length || P.minSev || P.secCats.size || P.commentedOnly || P.from || P.to || WS.scopeActive());
+    return !!(P.q || P.kinds.size < KINDS.length || P.minSev || P.secCats.size || P.commentedOnly || WS.scopeActive());
+  }
+  function resetPageFilters() {
+    P.q = ""; $("q").value = "";
+    P.kinds = new Set(KINDS.map((k) => k.key)); P.minSev = ""; P.secCats.clear(); P.commentedOnly = false;
+    $("min-sev").value = "";
+    save();
   }
   function resetFilters() {
-    P.q = ""; $("q").value = "";
-    P.kinds = new Set(KINDS.map((k) => k.key)); P.minSev = ""; P.secCats.clear(); P.commentedOnly = false; P.from = ""; P.to = "";
-    $("min-sev").value = ""; $("d-from").value = ""; $("d-to").value = "";
-    save();
+    resetPageFilters();
     WS.resetScope();
+  }
+  /** a dashboard link: only the page filters it names apply */
+  function filtersFromURL(params) {
+    if (!["kinds", "cats", "sev", "q"].some((k) => params.has(k))) return;
+    resetPageFilters();
+    const list = (k) => (params.get(k) || "").split(",").filter(Boolean);
+    if (params.has("kinds")) P.kinds = new Set(list("kinds").filter((k) => KIND_LABEL[k]));
+    if (params.has("cats")) P.secCats = new Set(list("cats"));
+    if (params.has("sev")) { P.minSev = params.get("sev"); $("min-sev").value = P.minSev; }
+    if (params.has("q")) { P.q = params.get("q"); $("q").value = P.q; }
+    save();
   }
 
   /* ---------------------------------------------------------------- rail */
@@ -131,11 +144,6 @@
     const sev = el("select", { class: "select", id: "min-sev", onchange: (e) => { P.minSev = e.target.value; changed(); } },
       el("option", { value: "" }, "All severities"), ...SS.SEV_ORDER.slice(1).map((s) => el("option", { value: s }, `${s[0].toUpperCase() + s.slice(1)} or worse`)));
     sev.value = P.minSev;
-    const date = (id, key, label) => {
-      const inp = el("input", { class: "text-input", type: "date", id, "aria-label": label, value: P[key] || null });
-      inp.addEventListener("change", () => { P[key] = inp.value; changed(); });
-      return inp;
-    };
     $("rail").replaceChildren(
       WS.scopeSection(resetFilters),
       el("div", { class: "rail-section" },
@@ -150,10 +158,8 @@
         el("div", { class: "field-row" }, sev),
         el("div", { class: "chip-row", id: "cats" })),
       el("div", { class: "rail-section" },
-        el("h3", {}, icon("date_range", "xs"), "Dates", el("button", { onclick: () => { P.from = P.to = ""; $("d-from").value = $("d-to").value = ""; changed(); } }, "Clear")),
-        el("label", { class: "field-row" }, el("span", { style: { width: "40px" } }, "From"), date("d-from", "from", "From date")),
-        el("label", { class: "field-row" }, el("span", { style: { width: "40px" } }, "To"), date("d-to", "to", "To date")),
-        el("div", { class: "segmented sm", id: "order", role: "group", "aria-label": "Order", style: { marginTop: "6px" } })));
+        el("h3", {}, icon("swap_vert", "xs"), "Order"),
+        el("div", { class: "segmented sm", id: "order", role: "group", "aria-label": "Order" })));
   }
 
   function renderRail({ kindCounts, catCounts }) {
@@ -437,6 +443,8 @@
     } catch (e) {
       snack("Could not load the workspace: " + e.message);
     }
+    filtersFromURL(WS.scopeFromURL());
+    history.replaceState(null, "", location.pathname);
     render();
     WS.watchVersion();
   }
