@@ -30,7 +30,6 @@ import io
 import os
 import platform
 import re
-import shlex
 import socket
 import sqlite3
 import sys
@@ -314,10 +313,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"wrote {out} ({rep.bytes / 1e6:.1f} MB): {summary} file(s) for {', '.join(users)} on {host}", file=sys.stderr)
     for s in rep.skipped:
         print(f"skipped {s}", file=sys.stderr)
-    zip_arg = str(out.resolve())
-    zip_arg = (f'"{zip_arg}"' if " " in zip_arg else zip_arg) if os.name == "nt" else shlex.quote(zip_arg)
-    print(f"upload it in SynthSift, or from the SynthSift folder run:\n  uv run synthsift serve --load {zip_arg}",
-          file=sys.stderr)
+    print("upload it in SynthSift", file=sys.stderr)
     return 0
 
 
