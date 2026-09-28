@@ -562,14 +562,21 @@ const SS = (() => {
       if (ev) return { convs: [ev.c], span: [ev.ts, ev.ts] };
       return { convs: (n && n.conv) || [], span: n ? seenRange(id) : [null, null] };
     }
+    /** every session a term appears in (a term is one node per conversation when not merged across them) */
+    function termSessions(n) {
+      const label = n.label.toLowerCase(), out = new Set(n.conv || []);
+      for (const m of G.nodes.values()) if (m.type === "entity" && m !== n && m.label.toLowerCase() === label) for (const c of m.conv || []) out.add(c);
+      return [...out].filter((c) => G.convs.has(c));
+    }
     const MENU_KIND = { conv: "Session", event: "Turn", term: "Term" };
     const FILTER_ROWS = [["host", "computer", "Host"], ["user", "person", "User"], ["harness", "terminal", "Agent"], ["conv", "forum", "Session"]];
     const dayStart = (ts, add = 0) => { const d = new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + add).toISOString(); };
     const shortDay = (ts) => new Date(ts).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
     /** right-click menu for a node or table row (`ref`: node id or tag target): "Filter on" its host, user, agent,
-     *  session or days, then tag checkboxes, "New tag…" and a comment. `target` is null for things that cannot be
-     *  tagged (tool hubs); `onFilter(patch, what)` narrows the shared scope. */
-    function itemMenu(ref, x, y, { target = null, onFilter }) {
+     *  session or days (for a term also "Show all sessions containing it"), then tag checkboxes, "New tag…" and a
+     *  comment. `target` is null for things that cannot be tagged (tool hubs); `onFilter(patch, what)` narrows the
+     *  shared scope, `onSessions(convIds, what)` shows only those sessions. */
+    function itemMenu(ref, x, y, { target = null, onFilter, onSessions }) {
       closeMenus();
       const n = G.nodes.get(ref);
       const label = n ? n.label : target ? labelFor(target) : ref;
@@ -593,6 +600,14 @@ const SS = (() => {
         }
         for (const [v, [text, patch]] of [...vals].slice(0, 3)) filters.push(filterItem(ic, name, text, patch, G.filter[key] === v));
         if (vals.size > 3) filters.push(el("div", { class: "im-note" }, `+ ${vals.size - 3} more ${name.toLowerCase()}s`));
+      }
+      const term = G.nodes.get(ref.replace(/^term:/, ""));
+      if (term && term.type === "entity") {
+        const sessions = termSessions(term);
+        filters.unshift(el("button", {
+          class: "im-filter", role: "menuitem", title: `Show only the sessions that mention “${term.label}”, on any host, user or agent`,
+          onclick: () => { menu.remove(); onSessions(sessions, `“${term.label}”`); },
+        }, icon("travel_explore"), el("span", { class: "grow" }, "Show all sessions containing it"), el("span", { class: "sub" }, fmt(sessions.length))));
       }
       const [lo, hi] = span;
       if (lo) {

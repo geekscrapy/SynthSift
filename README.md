@@ -382,7 +382,9 @@ Sessions, turns (messages, thoughts, tool calls and results) and terms
 - **Right-click** a graph node, or a row on the Nodes or Timeline page. The
   menu has tag checkboxes and a comment box.
 - **Filter on**: the same menu narrows every page to the item's host, user,
-  agent, session or days. The snackbar's *Undo* puts the previous scope back.
+  agent, session or days. For a term, *Show all sessions containing it* shows
+  just the sessions that mention it, on any host, user or agent. The
+  snackbar's *Undo* puts the previous scope back.
 - **Side panes** (the selection card, the transcript and each page's detail
   pane) show tags and comments; tag from the graph or the tables.
 - **What you see**:

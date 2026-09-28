@@ -754,7 +754,7 @@
       if (!id || !S.nodes.has(id)) return; // not clusters: their selection card has the actions
       const r = $("graph").getBoundingClientRect();
       hideTip();
-      M.itemMenu(id, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y, { target: targetOf(id), onFilter: filterOn });
+      M.itemMenu(id, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y, { target: targetOf(id), onFilter: filterOn, onSessions: showSessions });
     });
     network.on("doubleClick", (p) => {
       if (!p.nodes.length) return;
@@ -1948,6 +1948,14 @@
     const prev = S.filter;
     setConvFilter(SS.narrowScope(S.filter, patch));
     snack(`Showing only ${what}`, { label: "Undo", run: () => setConvFilter(prev) }, 6000);
+  }
+  // right-click "Show all sessions containing": only those sessions, whatever the host / user / agent scope
+  function showSessions(convIds, what) {
+    const prev = { filter: S.filter, hidden: new Set(S.hiddenConvs) };
+    const keep = new Set(convIds);
+    S.hiddenConvs = new Set(S.convOrder.filter((c) => !keep.has(c)));
+    setConvFilter(SS.narrowScope(S.filter, { host: "" }));
+    snack(`Showing ${plural(keep.size, "session")} containing ${what}`, { label: "Undo", run: () => { S.hiddenConvs = prev.hidden; setConvFilter(prev.filter); } }, 6000);
   }
   function setConvFilter(f) {
     S.filter = f;

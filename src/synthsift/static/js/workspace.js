@@ -151,11 +151,20 @@ const WS = (() => {
   }
 
   /** right-click menu for a table row: filter on its host / user / agent / session / days, tags and a comment */
-  const itemMenu = (ref, x, y, target) => M.itemMenu(ref, x, y, { target, onFilter: filterOn });
+  const itemMenu = (ref, x, y, target) => M.itemMenu(ref, x, y, { target, onFilter: filterOn, onSessions: showSessions });
   function filterOn(patch, what) {
     const prev = { ...W.filter };
     setFilter(patch);
     snack(`Showing only ${what}`, { label: "Undo", run: () => setFilter(prev) }, 6000);
+  }
+  /** only these sessions, whatever the host / user / agent scope (the time window stays) */
+  function showSessions(convIds, what) {
+    const prev = { filter: { ...W.filter }, hidden: [...W.hiddenConvs] };
+    const setHidden = (list) => { W.hiddenConvs = new Set(list); store.set("hiddenConvs", list); };
+    const keep = new Set(convIds);
+    setHidden(W.convOrder.filter((c) => !keep.has(c)));
+    setFilter({ host: "" });
+    snack(`Showing ${plural(keep.size, "session")} containing ${what}`, { label: "Undo", run: () => { setHidden(prev.hidden); setFilter(prev.filter); } }, 6000);
   }
   /** "Tags & comment" of a detail pane, read-only */
   function annotationSection(target) {
