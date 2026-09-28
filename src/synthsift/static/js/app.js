@@ -724,6 +724,15 @@
     };
     if (network) network.destroy();
     network = new vis.Network($("graph"), { nodes: nodesView, edges: edgesView }, options);
+    // vis-network bug: an animated move (fit/focus/moveTo) started before the previous one has drawn a frame leaves
+    // the previous one's redraw hook behind, and it replays that animation on every redraw, so the view jumps
+    // whenever the mouse moves. Drop the old hook before each new animation starts.
+    const view = network.view, animateView = view.animateView.bind(view);
+    view.animateView = (opts) => {
+      if (view.viewFunction) view.body.emitter.off("initRedraw", view.viewFunction);
+      view.easingTime = 0;
+      animateView(opts);
+    };
     S.physics = true;
     updatePhysicsButton();
     S.clusters.clear();
