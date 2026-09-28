@@ -55,6 +55,7 @@
     popout: null,
     clusterMode: store.get("clusterMode", null),
     clusters: new Map(),
+    selectedCluster: null,
     litClusters: new Set(),
     litEdges: null,
     posCache: {},
@@ -750,14 +751,14 @@
     network.on("oncontext", (p) => {
       const id = network.getNodeAt(p.pointer.DOM);
       if (p.event && p.event.preventDefault) p.event.preventDefault();
-      if (!id || !S.nodes.has(id)) return; // clusters filter on a click already
+      if (!id || !S.nodes.has(id)) return; // not clusters: their selection card has the actions
       const r = $("graph").getBoundingClientRect();
       hideTip();
       M.itemMenu(id, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y, { target: targetOf(id), onFilter: filterOn });
     });
     network.on("doubleClick", (p) => {
       if (!p.nodes.length) return;
-      if (network.isCluster(p.nodes[0])) { openClusterNode(p.nodes[0]); lightSelection(); settleLayout(); renderStats(S.data && S.data.stats); return; }
+      if (network.isCluster(p.nodes[0])) { focusCluster(p.nodes[0]); return; }
       network.focus(p.nodes[0], { scale: Math.max(1.2, network.getScale()), animation: { duration: 500 } });
     });
     network.on("hoverNode", (p) => (network.isCluster(p.node) ? clusterTip(p.node) : showNodeTip(p.node)));
@@ -794,15 +795,16 @@
   function restyleEdges() {
     if (edgesDS) edgesDS.update(S.data.edges.map(edgeStyle));
   }
-  // What a selection keeps lit: the selected node's edges as vis draws them, and the neighbours. When a neighbour
-  // (or the selected node) is inside a cluster, the cluster and the cluster edge stand in for it.
+  // What a selection keeps lit: the selected node's (or cluster's) edges as vis draws them, and the neighbours. When a
+  // neighbour (or the selected node) is inside a cluster, the cluster and the cluster edge stand in for it.
   function lightSelection() {
     S.litClusters.clear();
     S.litEdges = null;
     if (!S.neighbors || !network) return;
-    let selEnd = S.selected;
+    let selEnd = S.selected || S.selectedCluster;
     for (const [cid, c] of S.clusters) {
       if (c.members.has(S.selected)) selEnd = cid;
+      if (S.neighbors.has(cid)) { S.litClusters.add(cid); continue; }
       for (const id of S.neighbors) if (c.members.has(id)) { S.litClusters.add(cid); break; }
     }
     const lit = (end) => (S.clusters.has(end) ? S.litClusters.has(end) : S.neighbors.has(end));
@@ -979,6 +981,7 @@
     const mode = effectiveClusterMode();
     $("cluster-mode").closest(".mini-select").classList.toggle("active", mode !== "off");
     if (mode === "off") {
+      refreshClusterSelection();
       lightSelection();
       // clusters were just opened (e.g. a cluster was clicked): lay their members out
       if (settle && S.justUnclustered) settleLayout();
@@ -1021,6 +1024,7 @@
         clusterEdgeProperties: { color: { color: rgba(GC.outline, 0.5), inherit: false }, width: 1.2, smooth: smoothOption(), arrows: "" },
       });
     }
+    refreshClusterSelection();
     lightSelection();
     if (settle && (S.clusters.size || S.justUnclustered)) settleLayout();
     S.justUnclustered = false;
@@ -1094,7 +1098,7 @@
     };
   }
 
-  // Clicking a cluster narrows the whole workspace to it; in auto mode the next level then clusters (drill-down).
+  // Double-clicking a cluster narrows the whole workspace to it; in auto mode the next level then clusters (drill-down).
   function focusCluster(id) {
     const c = S.clusters.get(id);
     if (!c) return;
@@ -1125,7 +1129,7 @@
           el("div", { class: "tt-sub" }, `${c.mode} cluster · ${plural(c.count, "node")} · ${plural(c.convs.length, "conversation")}`))),
       c.sev ? el("div", { class: `tt-foot sev-${c.sev}` }, el("span", { class: "sev-chip" }, c.sev), " highest finding inside") : null,
       c.tags.length ? el("div", { class: "tt-foot", html: "Tags inside: " + tagChipsHTML(c.tags) }) : null,
-      el("div", { class: "tt-foot" }, "Click to filter to this cluster · double-click to expand it in place"));
+      el("div", { class: "tt-foot" }, "Click to see what it links to · double-click to dive in"));
     placeTip();
   }
 
@@ -1202,7 +1206,7 @@
 
   function onClick(p) {
     hideTip();
-    if (p.nodes.length && network && network.isCluster(p.nodes[0])) { focusCluster(p.nodes[0]); return; }
+    if (p.nodes.length && network && network.isCluster(p.nodes[0])) { selectCluster(p.nodes[0]); return; }
     if (p.nodes.length) selectNode(p.nodes[0]);
     else if (!p.edges.length) clearSelection();
   }
@@ -1211,6 +1215,7 @@
     const n = S.nodes.get(id);
     if (!n) return;
     S.selected = id;
+    S.selectedCluster = null;
     S.neighbors = new Set([id, ...(S.edgesByNode.get(id) || []).map((e) => (e.from === id ? e.to : e.from))]);
     if (network && S.visibleNodes.has(id)) {
       revealNode(id);
@@ -1232,8 +1237,43 @@
     }
   }
 
+  // A click on a cluster lights it and what it links to, so clusters can be compared; a double-click dives in.
+  function selectCluster(cid) {
+    if (!S.clusters.has(cid)) return;
+    S.selected = null;
+    S.selectedCluster = cid;
+    S.neighbors = new Set([cid, ...network.getConnectedNodes(cid)]);
+    S.matchSource = S.search ? searchSource() : null;
+    network.selectNodes([cid]);
+    lightSelection();
+    network.redraw();
+    renderSelection();
+    renderPanel();
+  }
+  /** after re-clustering: a selected cluster that still exists gets its new links, one that is gone is dropped */
+  function refreshClusterSelection() {
+    const cid = S.selectedCluster;
+    if (!cid) return;
+    if (S.clusters.has(cid)) {
+      S.neighbors = new Set([cid, ...network.getConnectedNodes(cid)]);
+      network.selectNodes([cid]);
+    } else {
+      S.selectedCluster = null;
+      S.neighbors = null;
+      renderSelection();
+    }
+  }
+  function expandCluster(cid) {
+    clearSelection();
+    openClusterNode(cid);
+    lightSelection();
+    settleLayout();
+    renderStats(S.data && S.data.stats);
+  }
+
   function clearSelection() {
     S.selected = null;
+    S.selectedCluster = null;
     S.neighbors = null;
     if (S.search) S.matchSource = searchSource();
     else S.matchSource = null;
@@ -1262,6 +1302,8 @@
 
   function renderSelection() {
     const box = $("selection");
+    const c = S.selectedCluster && S.clusters.get(S.selectedCluster);
+    if (c) { renderClusterSelection(box, c); return; }
     const n = S.selected && S.nodes.get(S.selected);
     if (!n) { box.classList.add("hidden"); box.replaceChildren(); return; }
     const k = kindOf(n);
@@ -1292,6 +1334,24 @@
       el("div", {},
         el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => focusNode(n.id) }, icon("center_focus_strong", "sm")),
         el("a", { class: "icon-btn sm", title: "Open in the Nodes table", href: `/nodes?select=${encodeURIComponent(n.id)}`, target: "synthsift-nodes" }, icon("table_rows", "sm")),
+        el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
+    box.classList.remove("hidden");
+  }
+
+  function renderClusterSelection(box, c) {
+    const sub = el("div", { class: "sub" }, el("span", { class: "tag" }, `${c.mode} cluster`), el("span", { class: "tag" }, plural(c.count, "node")),
+      el("span", { class: "tag" }, plural(c.convs.length, "conversation")), el("span", { class: "tag" }, plural(S.neighbors.size - 1, "link")),
+      c.sev ? el("span", { class: `sev-${c.sev}`, title: "Highest finding inside" }, el("span", { class: "sev-chip" }, c.sev)) : null);
+    const body = el("div", { class: "grow" }, el("div", { class: "title" }, c.label), sub,
+      c.tags.length ? el("div", { class: "tag-row", style: { marginTop: "6px" }, html: tagChipsHTML(c.tags) }) : null,
+      el("div", { class: "chip-row", style: { marginTop: "10px" } },
+        el("button", { class: "btn tonal sm", title: "Filter the workspace to this cluster (or double-click it)", onclick: () => focusCluster(c.id) }, icon("zoom_in"), "Dive in"),
+        el("button", { class: "btn text sm", title: "Show its nodes here, without filtering", onclick: () => expandCluster(c.id) }, icon("open_in_full"), "Expand in place")));
+    box.replaceChildren(
+      el("span", { class: "ico", style: { background: c.color } }, icon(CLUSTER_ICON[c.mode] || "workspaces")),
+      body,
+      el("div", {},
+        el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => network.focus(c.id, { scale: Math.max(network.getScale(), 0.6), animation: { duration: 450 } }) }, icon("center_focus_strong", "sm")),
         el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
     box.classList.remove("hidden");
   }
@@ -1754,7 +1814,7 @@
     }
     S.search = { q, re, occ, byPara, nodeIds };
     $("q-result").textContent = `${plural(nodeIds.size, "node")} · ${plural(byPara.size, "paragraph")}`;
-    if (!S.selected || switchTab) { S.selected = null; S.neighbors = null; renderSelection(); lightSelection(); S.matchSource = searchSource(); }
+    if (!S.selected || switchTab) { S.selected = S.selectedCluster = null; S.neighbors = null; renderSelection(); lightSelection(); S.matchSource = searchSource(); }
     network && network.redraw();
     if (switchTab) setTab("matches"); else renderPanel();
   }
