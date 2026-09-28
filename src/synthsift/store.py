@@ -39,6 +39,7 @@ from .modules.entities import read_results
 from .modules.runner import Runner
 from .nlp import security
 from .nlp.pipeline import ParaResult
+from .segment import VERSION as SEGMENT_VERSION
 from .segment import Event, Paragraph, segment
 from .settings import SettingsStore
 
@@ -234,7 +235,7 @@ class Workspace:
         self._set("ingest", 0, "Loading the stored corpus")
         self._load_conversations()
         self.events, self.paragraphs, self.hashes = {}, {}, {}
-        if self.db.get_state("segment_fp") != self.settings.fingerprint("segment"):
+        if self.db.get_state("segment_fp") != self._segment_fp():
             return
         self._set("segment", 0, "Loading turns and paragraphs")
         for conv, doc in self.db.query("SELECT conv, doc FROM events ORDER BY conv, seq"):
@@ -255,6 +256,9 @@ class Workspace:
         """Conversation order, as the in-memory pipeline would produce it."""
         order = {c.id: i for i, c in enumerate(self.conversations)}
         self.paragraphs = dict(sorted(self.paragraphs.items(), key=lambda kv: (order.get(kv[1].conv, 0), kv[1].seq)))
+
+    def _segment_fp(self) -> str:
+        return f"{SEGMENT_VERSION}:{self.settings.fingerprint('segment')}"
 
     def _ordered_datasets(self) -> list[Dataset]:
         return sorted(self.datasets.values(), key=lambda d: d.uploaded_at)
@@ -289,7 +293,7 @@ class Workspace:
     def _segment(self) -> None:
         """Turns and paragraphs for conversations that don't have them yet (all after a 'segment' change)."""
         cfg = self.settings.values
-        fp = self.settings.fingerprint("segment")
+        fp = self._segment_fp()
         if self.db.get_state("segment_fp") != fp:
             with self.db.transaction():
                 self.db.delete("events")
@@ -382,9 +386,9 @@ class Workspace:
         if "security" not in enabled_modules(self.settings.values) or "a_findings" not in self.db.tables():
             return []
         return [security.Finding(conv, event, cat, rule, label, sev, detail, json.loads(ents or "[]"),
-                                 [tuple(c) for c in json.loads(chain or "[]")])
-                for conv, event, cat, rule, label, sev, detail, ents, chain in self.db.query(
-                    "SELECT conv, event, category, rule, label, severity, detail, entities, chain FROM a_findings ORDER BY seq")]
+                                 [tuple(c) for c in json.loads(chain or "[]")], value or "")
+                for conv, event, cat, rule, label, sev, detail, ents, chain, value in self.db.query(
+                    "SELECT conv, event, category, rule, label, severity, detail, entities, chain, value FROM a_findings ORDER BY seq")]
 
     def _para_labels(self) -> dict[str, dict[str, Any]]:
         """Paragraph labels from label modules (content type …), by content hash."""

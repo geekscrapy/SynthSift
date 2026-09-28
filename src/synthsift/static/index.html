@@ -16,6 +16,7 @@
     <button class="icon-btn" id="btn-left" title="Toggle conversations panel"><span class="msi">menu</span></button>
     <div class="brand"><img class="logo" src="/static/favicon.svg" alt=""><span><b>Synth</b>Sift</span></div>
     <nav class="page-nav" aria-label="Views">
+      <a href="/dashboard"><span class="msi">dashboard</span><span>Dashboard</span></a>
       <a href="/" class="on" aria-current="page"><span class="msi">hub</span><span>Graph</span></a>
       <a href="/nodes"><span class="msi">table_rows</span><span>Nodes</span></a>
       <a href="/timeline"><span class="msi">timeline</span><span>Timeline</span></a>
@@ -56,6 +57,7 @@
           <label class="mini-select" title="Filter by agent / harness"><span class="msi xs">terminal</span><select id="f-harness"></select></label>
         </div>
         <button class="chip sm conv-focus hidden" id="f-conv" title="Showing one conversation – click to clear"><span class="msi xs">forum</span><span class="label"></span><span class="msi xs">close</span></button>
+        <button class="chip sm conv-focus time-focus hidden" id="f-time" title="Showing one time window – click to clear"><span class="msi xs">schedule</span><span class="label"></span><span class="msi xs">close</span></button>
         <label class="search compact">
           <span class="msi sm">travel_explore</span>
           <input id="conv-q" type="search" placeholder="Find conversations containing…" autocomplete="off">

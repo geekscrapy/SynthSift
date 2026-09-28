@@ -19,10 +19,10 @@ def wait(client, version=0, timeout=120):
 def test_end_to_end(tmp_path, sample_zip):
     client = TestClient(create_app(Workspace(tmp_path)))
     assert client.get("/api/graph").json()["empty"]
-    for page in ("/", "/settings", "/nodes", "/timeline"):
+    for page in ("/", "/dashboard", "/settings", "/nodes", "/timeline"):
         r = client.get(page)
         assert r.status_code == 200 and "<title>SynthSift" in r.text
-    for asset in ("common.js", "workspace.js", "nodes.js", "timeline.js", "app.js"):
+    for asset in ("common.js", "workspace.js", "dashboard.js", "nodes.js", "timeline.js", "app.js"):
         assert client.get(f"/static/js/{asset}").status_code == 200
     assert client.get("/vendor/vis/vis-network.min.js").status_code == 200
 

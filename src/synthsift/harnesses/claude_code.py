@@ -120,6 +120,7 @@ class ClaudeCodeParser(HarnessParser):
     name = "claude_code"
     label = "Claude Code"
     aliases = ("claude-code", "claudecode", "claude", ".claude")
+    subagent_tools = ("Task", "Agent")
     description = "Claude Code CLI sessions: ~/.claude/projects/<project>/<session>.jsonl (+ subagents/)."
 
     # ------------------------------------------------------------------ API

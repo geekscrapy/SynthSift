@@ -1,4 +1,4 @@
-/* Shared workspace model for the full-page views (Nodes, Timeline).
+/* Shared workspace model for the full-page views (Nodes, Timeline, Dashboard).
  *
  * Loads the analysed graph, settings and analyst annotations, and exposes the
  * same filter / tag / comment semantics as the graph page (the lookups and tag
@@ -25,14 +25,14 @@ const WS = (() => {
     findingsByNode: new Map(),
     annotations: {},
     tags: [],
-    filter: store.get("convFilter", { host: "", user: "", harness: "", conv: "" }),
+    filter: { ...SS.emptyScope(), ...store.get("convFilter", {}) },
     hiddenConvs: new Set(store.get("hiddenConvs", [])),
     tagFilter: new Set(store.get("tagFilter", [])),
     hideIgnored: store.get("hideIgnored", true),
     listeners: new Set(),
   };
   const M = SS.model(W, { onSaved: () => { broadcast({ type: "annotations" }); emit("annotations"); }, promptTag: newTag });
-  const { kindOf, convVisible, targetOf, annOf, tagsFor, labelFor, seenRange, loadAnnotations, toggleTag, tagChipsHTML, chainEl } = M;
+  const { kindOf, convVisible, paraVisible, targetOf, annOf, tagsFor, labelFor, seenRange, loadAnnotations, toggleTag, tagChipsHTML, chainEl } = M;
 
   /* ------------------------------------------------------------- loading */
   async function load() {
@@ -76,7 +76,15 @@ const WS = (() => {
   }
 
   /* ------------------------------------------------------------ filters */
-  const nodeVisible = (n) => !(n.conv && n.conv.length) || n.conv.some(convVisible);
+  const nodeVisible = (n) => (!(n.conv && n.conv.length) || n.conv.some(convVisible)) && M.nodeInWindow(n);
+
+  /** apply scope parameters from the page URL (?from=…&to=…&host=…) to the shared filter; returns the parameters */
+  function scopeFromURL() {
+    const params = new URLSearchParams(location.search);
+    const patch = SS.scopeFromURL(params);
+    if (patch) setFilter(patch);
+    return params;
+  }
 
   function setFilter(patch, { broadcastIt = true } = {}) {
     W.filter = { ...W.filter, ...patch };
@@ -110,7 +118,21 @@ const WS = (() => {
       ...all.filter((c) => (!f.host || c.host === f.host) && (!f.user || c.user === f.user) && (!f.harness || c.harness === f.harness))
         .map((c) => el("option", { value: c.id, selected: f.conv === c.id }, c.title)));
     container.replaceChildren(el("div", { class: "filter-row" }, ...rows),
-      el("label", { class: `mini-select wide${f.conv ? " active" : ""}`, title: "Conversation" }, icon("forum", "xs"), convSel));
+      el("label", { class: `mini-select wide${f.conv ? " active" : ""}`, title: "Conversation" }, icon("forum", "xs"), convSel),
+      timeInputs());
+  }
+  /** from / to inputs for the shared time window */
+  function timeInputs() {
+    const f = W.filter;
+    const inp = (key, label) => el("input", {
+      type: "datetime-local", class: "text-input", "aria-label": label, title: label, value: SS.isoToLocalInput(f[key]),
+      onchange: (e) => setFilter({ [key]: SS.localInputToIso(e.target.value) }),
+    });
+    return el("div", { class: `time-row${f.from || f.to ? " active" : ""}` },
+      el("div", { class: "time-head" }, icon("schedule", "xs"), el("span", { class: "grow" }, f.from || f.to ? SS.fmtRange(f.from, f.to) : "Any time"),
+        f.from || f.to ? el("button", { class: "icon-btn sm", title: "Clear the time window", onclick: () => setFilter({ from: "", to: "" }) }, icon("close", "sm")) : null),
+      el("label", {}, el("span", {}, "From"), inp("from", "From (inclusive)")),
+      el("label", {}, el("span", {}, "To"), inp("to", "To (exclusive)")));
   }
 
   /* -------------------------------------------------------- annotations */
@@ -218,7 +240,7 @@ const WS = (() => {
       if (m.type === "annotations") { await loadAnnotations(); emit("annotations"); }
       else if (m.type === "filters") {
         W.hiddenConvs = new Set(m.hiddenConvs || []);
-        W.filter = { conv: "", ...(m.filter || W.filter) };
+        W.filter = { ...SS.emptyScope(), ...(m.filter || W.filter) };
         emit("filters");
       } else if (m.type === "tagFilter") { W.tagFilter = new Set(m.tags || []); emit("tagFilter"); }
       else if (m.type === "reload") { await load(); emit("reload"); }
@@ -270,10 +292,10 @@ const WS = (() => {
       el("button", { class: "btn text sm", onclick: () => { W.hiddenConvs.clear(); store.set("hiddenConvs", []); setFilter({}); } }, "Show"))] : []));
   }
   /** the filters shared with the graph page: conversation scope and tag filter */
-  const scopeActive = () => W.tagFilter.size || W.filter.host || W.filter.user || W.filter.harness || W.filter.conv;
+  const scopeActive = () => W.tagFilter.size || SS.SCOPE_KEYS.some((k) => W.filter[k]);
   function resetScope() {
     W.tagFilter.clear(); store.set("tagFilter", []); broadcast({ type: "tagFilter", tags: [] });
-    setFilter({ host: "", user: "", harness: "", conv: "" }); // re-renders via the "filters" event
+    setFilter(SS.emptyScope()); // re-renders via the "filters" event
   }
 
   /** security category chips with counts; `selected` is the page's set of category keys */
@@ -389,7 +411,7 @@ const WS = (() => {
     const byPara = new Map();
     for (const [pid, s, e] of n.occ || []) {
       const p = W.paras.get(pid);
-      if (!p || !convVisible(p.c)) continue;
+      if (!p || !paraVisible(pid)) continue;
       if (!byPara.has(pid)) byPara.set(pid, []);
       byPara.get(pid).push([s, e]);
     }
@@ -540,8 +562,9 @@ const WS = (() => {
   }
 
   return {
-    W, load, on, watchVersion,
-    kindOf, kindGroup: M.kindGroup, convVisible, nodeVisible,
+    W, load, on, watchVersion, setFilter, scopeFromURL, broadcast,
+    kindOf, kindGroup: M.kindGroup, convVisible, nodeVisible, inWindow: M.inWindow, windowOn: M.windowOn,
+    eventVisible: M.eventVisible, paraVisible,
     targetOf, annOf, tagsFor, nodeTags: M.nodeTags, labelFor, convFor: M.convFor, tsFor: M.tsFor, seenRange,
     tagChipsHTML, openTagMenu: M.openTagMenu, tagEditor, renderTagFilter,
     findingsForNode, chainEl, endpointLabel: M.endpointLabel, showInGraph,

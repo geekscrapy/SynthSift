@@ -50,7 +50,8 @@ CATEGORIES = {
     "destruction": "Destructive / data loss",
     "evasion": "Log / history clearing",
     "watchlist": "Watchlist match",
-    "ioc": "IOC / keyword list hit",
+    "ioc": "IOC list hit",
+    "keyword": "Keyword list hit",
 }
 
 
@@ -65,12 +66,13 @@ class Finding:
     detail: str
     entities: list[str] = field(default_factory=list)          # entity keys
     chain: list[tuple[str, str, str]] = field(default_factory=list)  # (src_key, action, dst_key)
+    value: str = ""  # what matched: an indicator, keyword or watchlist text
 
     def to_json(self) -> dict[str, Any]:
         return {
             "conv": self.conv, "event": self.event, "category": self.category, "rule": self.rule,
             "label": self.label, "severity": self.severity, "detail": self.detail,
-            "entities": self.entities, "chain": [list(c) for c in self.chain],
+            "entities": self.entities, "chain": [list(c) for c in self.chain], "value": self.value,
         }
 
 
@@ -445,7 +447,8 @@ class SecurityScanner:
             m = w.pattern.search(text)
             if m:
                 out.append(Finding(event.conv, event.id, "watchlist", "watch." + w.label.lower().replace(" ", "_"),
-                                   f"Watchlist: {w.label}", w.severity, f"matched `{m.group(0)[:60]}`"))
+                                   f"Watchlist: {w.label}", w.severity, f"matched `{m.group(0)[:60]}`",
+                                   value=m.group(0)[:60]))
         return out
 
 

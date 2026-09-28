@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SynthSift – Timeline</title>
+  <title>SynthSift – Dashboard</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/app.css">
   <script>
@@ -15,19 +15,17 @@
     <button class="icon-btn" id="btn-rail" title="Toggle filters"><span class="msi">menu</span></button>
     <div class="brand"><img class="logo" src="/static/favicon.svg" alt=""><span><b>Synth</b>Sift</span></div>
     <nav class="page-nav" aria-label="Views">
-      <a href="/dashboard"><span class="msi">dashboard</span><span>Dashboard</span></a>
+      <a href="/dashboard" class="on" aria-current="page"><span class="msi">dashboard</span><span>Dashboard</span></a>
       <a href="/"><span class="msi">hub</span><span>Graph</span></a>
       <a href="/nodes"><span class="msi">table_rows</span><span>Nodes</span></a>
-      <a href="/timeline" class="on" aria-current="page"><span class="msi">timeline</span><span>Timeline</span></a>
+      <a href="/timeline"><span class="msi">timeline</span><span>Timeline</span></a>
     </nav>
     <label class="search">
       <span class="msi">search</span>
-      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Filter the timeline by text, tag, comment, host…  (/regex/ supported)">
+      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Filter the long-tail lists…  (/regex/ supported)">
       <span class="result" id="q-result"></span>
     </label>
     <div class="actions">
-      <button class="icon-btn hide-sm" id="btn-cols" title="Columns"><span class="msi">view_column</span></button>
-      <button class="icon-btn" id="btn-csv" title="Export the filtered rows as CSV"><span class="msi">download</span></button>
       <button class="icon-btn hide-sm" id="btn-theme" title="Theme"><span class="msi">dark_mode</span></button>
       <a class="icon-btn" href="/settings" title="Settings"><span class="msi">settings</span></a>
     </div>
@@ -35,16 +33,16 @@
 
   <div class="page-shell" id="shell">
     <aside class="filter-rail" id="rail" aria-label="Filters"></aside>
-    <main class="page-main">
+    <main class="page-main dash">
       <div class="table-toolbar" id="toolbar"></div>
-      <div class="grid-wrap" id="grid-wrap" tabindex="-1"></div>
+      <div class="dash-body" id="body"></div>
     </main>
-    <aside class="detail-pane hidden" id="detail" aria-label="Details"></aside>
   </div>
 
+  <div class="viz-tip" id="tip" role="tooltip"></div>
   <div class="snackbar" id="snackbar"><span class="grow" id="snack-text"></span><button class="btn text sm hidden" id="snack-action"></button></div>
   <script src="/static/js/common.js"></script>
   <script src="/static/js/workspace.js"></script>
-  <script src="/static/js/timeline.js"></script>
+  <script src="/static/js/dashboard.js"></script>
 </body>
 </html>
