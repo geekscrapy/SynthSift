@@ -1,8 +1,12 @@
 import pytest
 
-from synthsift.nlp.pipeline import Analyzer, extract_text, looks_like_code, resolve_wordnet
+from synthsift.modules.runner import analyze
+from synthsift.nlp.pipeline import looks_like_code, resolve_wordnet
 from synthsift.nlp.regex_extractors import REGEX_DEFS, find_all
-from synthsift.settings import defaults
+
+
+def mentions(text, cfg=None):
+    return analyze([("p", text, "user", False)], cfg)["p"].mentions
 
 
 def cats(text):
@@ -43,7 +47,7 @@ def test_wordnet_resolution_prefers_food_for_ingredients():
 
 
 def test_pipeline_finds_domain_objects_and_verbs():
-    ms = {m.key: m for m in extract_text(
+    ms = {m.key: m for m in mentions(
         "I want to bake garlic bread with olive oil for Maria. My Toyota Corolla needs new brake pads.")}
     assert ms["garlic bread"].category == "food"
     assert ms["olive oil"].category == "food"
@@ -53,12 +57,12 @@ def test_pipeline_finds_domain_objects_and_verbs():
 
 
 def test_relations_link_subject_and_object():
-    res = Analyzer(defaults()).analyze([("p", "Alice deployed the Kubernetes cluster to us-east-1.", "user", False)])["p"]
+    res = analyze([("p", "Alice deployed the Kubernetes cluster to us-east-1.", "user", False)])["p"]
     assert any(r.subj == "alice" and r.obj == "kubernetes" or r.obj == "us-east-1" for r in res.relations)
 
 
 def test_tool_argument_key_is_not_an_entity():
-    res = Analyzer(defaults()).analyze([("p", "command: ls -la /etc/hosts", "tool_call", False)])["p"]
+    res = analyze([("p", "command: ls -la /etc/hosts", "tool_call", False)])["p"]
     assert [m.key for m in res.mentions] == ["/etc/hosts"]
 
 
@@ -70,11 +74,11 @@ def test_code_heuristic():
 
 def test_custom_vocabulary_and_patterns():
     cfg = {"custom_gazetteer": "spell: expelliarmus, lumos", "custom_regex": r"ticket: \bJIRA-\d+\b"}
-    found = {m.key: m.category for m in extract_text("Cast Lumos then file JIRA-42.", cfg)}
+    found = {m.key: m.category for m in mentions("Cast Lumos then file JIRA-42.", cfg)}
     assert found["lumos"] == "spell"
     assert found["JIRA-42"] == "ticket"
 
 
 def test_ignore_list():
-    found = {m.key for m in extract_text("Thanks for the example about the database.", {"ignore_terms": "database\nexample"})}
+    found = {m.key for m in mentions("Thanks for the example about the database.", {"ignore_terms": "database\nexample"})}
     assert "database" not in found and "example" not in found

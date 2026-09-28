@@ -1,13 +1,13 @@
-"""Shared NLP building blocks and the in-process analyser.
+"""Shared NLP building blocks.
 
 The extraction itself lives in the enrichment modules (:mod:`synthsift.modules`):
 ``regex`` (paths, URLs, IPs, hashes …), ``nlp`` (vocabularies, spaCy NER, noun
 phrases through WordNet, subject–verb–object structure), ``ioc`` (indicator and
 keyword lists) and the ``entities`` resolver that merges their candidates into
 *mentions* (typed spans with character offsets) and *relations*.  This module
-keeps what they share – result types, spaCy / WordNet loading, the text-source
-rules – plus :class:`Analyzer`, which runs those modules in memory without a
-database (tests, the REPL).
+keeps what they share: result types, spaCy / WordNet loading and the
+text-source rules.  To run the modules on a few strings, use
+:func:`synthsift.modules.runner.analyze`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
-from typing import Any, Iterable
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -155,59 +155,6 @@ def analysed_text(text: str, role: str) -> str:
         cut = text.index(": ") + 2
         return " " * cut + text[cut:]
     return text
-
-
-class Analyzer:
-    """Run the extraction modules in-process on a few paragraphs (no database).
-
-    Handy in tests and the REPL; the app itself runs the same modules through
-    :mod:`synthsift.modules.runner`, which stores their output.
-    """
-
-    def __init__(self, cfg: dict[str, Any]):
-        from ..modules import registry
-
-        mods = registry()
-        enabled = {n for n, m in mods.items() if m.core or cfg.get(m.switch(), m.default_enabled)}
-        # paragraph-scoped extraction modules, in dependency order
-        self.order = [n for n in ("regex", "ioc_tokens", "nlp") if n in enabled] + ["entities"]
-        self.mods = {n: mods[n](cfg) for n in self.order}
-        for m in self.mods.values():
-            m.setup()
-
-    def analyze(self, items: Iterable[tuple[str, str, str, bool]]) -> dict[str, ParaResult]:
-        """items: (paragraph id, text, role, is_code)."""
-        from ..modules import Deps, ParaIn, para_hash
-        from ..modules.entities import to_para_result
-
-        paras: dict[str, ParaIn] = {}
-        ids: dict[str, str] = {}
-        for pid, text, role, code in items:
-            h = para_hash(text, role, code)
-            paras[h] = ParaIn(h, text, role, bool(code))
-            ids[pid] = h
-        chunk = list(paras.values())
-        data: dict[str, dict[str, list[tuple]]] = {}
-        columns: dict[str, list[str]] = {}
-        for name in self.order:
-            mod = self.mods[name]
-            out = mod.process(chunk, Deps(dict(data), columns))
-            for tbl in mod.tables:
-                columns[tbl.name] = tbl.names
-                by_para: dict[str, list[tuple]] = {}
-                for row in out.get(tbl.name, []):
-                    by_para.setdefault(row[0], []).append(row)
-                data[tbl.name] = by_para
-        return {pid: to_para_result(data.get("x_entities", {}).get(h, []), data.get("x_relations", {}).get(h, []))
-                for pid, h in ids.items()}
-
-
-def extract_text(text: str, cfg: dict[str, Any] | None = None) -> list[Mention]:
-    """Convenience helper: analyse a single piece of text (used in tests / REPL)."""
-    from ..settings import defaults
-
-    merged = {**defaults(), **(cfg or {})}
-    return Analyzer(merged).analyze([("p", text, "user", False)])["p"].mentions
 
 
 #: settings that decide which paragraphs are analysed and how deeply

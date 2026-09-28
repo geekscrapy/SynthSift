@@ -217,12 +217,16 @@ class EntitiesModule(Module):
                         res.relations.append(rel)
 
 
-def to_para_result(ent_rows: list[tuple], rel_rows: list[tuple]) -> ParaResult:
-    """Rows of ``x_entities`` / ``x_relations`` (full rows, para_hash first) → ParaResult."""
-    res = ParaResult()
-    for r in sorted(ent_rows, key=lambda r: r[1]):
-        res.mentions.append(Mention(r[5], r[4], r[6], r[2], r[3], r[7], r[8] or 0, r[9], list(r[10] or [])))
-    for r in sorted(rel_rows, key=lambda r: r[1]):
-        res.relations.append(Relation(r[2], r[3], r[4], r[5] or 0))
-    return res
-
+def read_results(storage) -> dict[str, ParaResult]:
+    """The stored entities and relations, as one ParaResult per paragraph hash."""
+    out: dict[str, ParaResult] = {}
+    if "x_entities" not in storage.tables():
+        return out
+    for h, key, text, category, start, end, source, sent, verb, labels in storage.query(
+            'SELECT para_hash, key, text, category, start, "end", source, sent, verb, labels FROM x_entities ORDER BY para_hash, ord'):
+        out.setdefault(h, ParaResult()).mentions.append(Mention(key, text, category, start, end, source, sent or 0, verb,
+                                                                list(labels or [])))
+    for h, subj, verb, obj, sent in storage.query(
+            "SELECT para_hash, subj, verb, obj, sent FROM x_relations ORDER BY para_hash, ord"):
+        out.setdefault(h, ParaResult()).relations.append(Relation(subj, verb, obj, sent or 0))
+    return out

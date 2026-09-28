@@ -30,7 +30,6 @@ class SecurityModule(Module):
     scope = "corpus"
     version = "2"
     needs_corpus = True
-    enable_key = "sec_enabled"
     tables = (FINDINGS,)
     uses_settings = ("ioc_findings",)
     options = (
@@ -59,8 +58,7 @@ class SecurityModule(Module):
 
     def run_corpus(self, ctx: Any) -> int:
         conversations, events, paragraphs, analysis = ctx.corpus()
-        cfg = {**self.cfg, "sec_enabled": True}
-        findings = security.scan(conversations, events, paragraphs, analysis, cfg)
+        findings = security.scan(conversations, events, paragraphs, analysis, self.cfg)
         if self.opt("ioc_findings", True) and "ioc" in ctx.enabled:
             findings += self._ioc_findings(ctx, paragraphs, analysis)
         st = ctx.storage

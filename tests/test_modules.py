@@ -1,7 +1,6 @@
 """Storage, the enrichment module framework and runner, IOC / keyword lists, and the persistent workspace."""
 
 import gzip
-import json
 import time
 
 import pytest
@@ -13,7 +12,6 @@ from synthsift.ingest import read_zip
 from synthsift.modules import Deps, ParaIn, enabled_modules, para_hash, registry
 from synthsift.modules.ioc import tokens
 from synthsift.modules.runner import Runner, module_stats
-from synthsift.nlp.pipeline import Analyzer
 from synthsift.segment import segment
 from synthsift.server import create_app
 from synthsift.settings import SCHEMA_BY_KEY, defaults
@@ -59,9 +57,6 @@ def test_duckdb_storage_roundtrip(tmp_path):
             st.delete("t_demo")
             raise RuntimeError("roll back")
     assert st.count("t_demo") == 2
-    # additive migration: a new column on an existing table
-    st.ensure(table("t_demo", "para_hash", ("n", "int"), ("tags", "text[]"), ("meta", "json"), ("ok", "bool"), ("extra", "float")))
-    assert st.query('SELECT count(*) FROM t_demo WHERE extra IS NULL')[0][0] == 2
     st.set_state("k", "v")
     st.set_state("k", "w")
     assert st.get_state("k") == "w" and st.get_state("missing", 5) == 5
@@ -90,21 +85,6 @@ def test_registry_and_settings():
 
 
 # ------------------------------------------------------------------- runner
-def test_runner_matches_in_process_analyzer(sample_paras):
-    st = open_storage(None)
-    fill(st, sample_paras)
-    c = cfg()
-    report = Runner(st, c).run()
-    assert set(states(report).values()) == {"done"} and "security" not in states(report)  # no corpus given
-    got = {}
-    for row in st.query('SELECT para_hash, key, text, category, start, "end", source FROM x_entities'):
-        got.setdefault(row[0], []).append(tuple(row[1:]))
-    ref = Analyzer(c).analyze([(p.hash, p.text, p.role, p.code) for p in sample_paras])
-    for p in sample_paras:
-        want = sorted((m.key, m.text, m.category, m.start, m.end, m.source) for m in ref[p.hash].mentions)
-        assert sorted(got.get(p.hash, [])) == want, p.text[:80]
-
-
 def test_runner_is_incremental(sample_paras):
     st = open_storage(None)
     fill(st, sample_paras[:-5])
@@ -249,19 +229,6 @@ def test_workspace_persists_and_restores(tmp_path, sample_zip):
     ws2.wait()
     assert not ws2.conversations and ws2.db.count("paragraphs") == 0 and ws2.db.count("x_entities") == 0
     ws2.close()
-
-
-def test_workspace_migrates_the_old_uploads_index(tmp_path, sample_zip):
-    (tmp_path / "uploads").mkdir()
-    (tmp_path / "uploads" / "old-1.zip").write_bytes(sample_zip)
-    (tmp_path / "datasets.json").write_text(json.dumps([{"id": "old-1", "name": "samples.zip", "uploaded_at": 1.0,
-                                                         "size": len(sample_zip), "files": 0, "conversations": 0,
-                                                         "warnings": []}]))
-    ws = Workspace(tmp_path)
-    ws.wait()
-    assert ws.status.state == "idle" and len(ws.conversations) == 21
-    assert not (tmp_path / "datasets.json").exists()
-    ws.close()
 
 
 def test_modules_lists_and_enrichment_api(tmp_path, sample_zip):

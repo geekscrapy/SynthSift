@@ -63,11 +63,6 @@ class DuckDBStorage(Storage):
         cols = ", ".join(f"{_q(c.name)} {_SQL_TYPES[c.type]}" for c in tbl.columns)
         with self._write_lock:
             self.con.execute(f"CREATE TABLE IF NOT EXISTS {_q(tbl.name)} ({cols})")
-            existing = {r[0] for r in self.con.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?", (tbl.name,)).fetchall()}
-            for c in tbl.columns:  # additive migrations: new columns on existing tables
-                if c.name not in existing:
-                    self.con.execute(f"ALTER TABLE {_q(tbl.name)} ADD COLUMN {_q(c.name)} {_SQL_TYPES[c.type]}")
             # ``tbl.index`` is only a hint here: DuckDB answers our lookups with hash joins and
             # zone maps, and ART indexes would double the file size and slow bulk inserts.
 

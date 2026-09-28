@@ -35,7 +35,7 @@ from .graph.builder import build_graph, graph_to_json
 from .ingest import read_zip
 from .models import Conversation
 from .modules import enabled_modules, para_hash, registry
-from .modules.entities import to_para_result
+from .modules.entities import read_results
 from .modules.runner import Runner
 from .nlp import security
 from .nlp.pipeline import ParaResult
@@ -131,29 +131,9 @@ class Workspace:
 
     # ------------------------------------------------------------ datasets
     def _load_index(self) -> None:
-        sql = "SELECT id, name, uploaded_at, size, files, conversations, warnings, ingested FROM datasets"
-        rows = self.db.query(sql)
-        if not rows:
-            self._migrate_index()
-            rows = self.db.query(sql)
-        for r in rows:
+        for r in self.db.query("SELECT id, name, uploaded_at, size, files, conversations, warnings, ingested FROM datasets"):
             if (self.uploads / f"{r[0]}.zip").exists():
-                self.datasets[r[0]] = Dataset(r[0], r[1], r[2], r[3], r[4] or 0, r[5] or 0, json.loads(r[6] or "[]"),
-                                              bool(r[7]))
-
-    def _migrate_index(self) -> None:
-        """Before the database, the uploads index was datasets.json."""
-        old = self.dir / "datasets.json"
-        try:
-            items = json.loads(old.read_text())
-        except (OSError, ValueError):
-            return
-        for d in items:
-            try:
-                self.db.insert(Batch.from_rows(DATASETS, [Dataset(**{**d, "ingested": False}).row()]))
-            except TypeError:
-                continue
-        old.rename(old.with_suffix(".json.migrated"))
+                self.datasets[r[0]] = Dataset(*r[:6], json.loads(r[6]), r[7])
 
     def _save_dataset(self, ds: Dataset) -> None:
         with self.db.transaction():
@@ -395,24 +375,8 @@ class Workspace:
         return self.hashes.get(pid, "")
 
     def _load_analysis(self) -> dict[str, ParaResult]:
-        tables = set(self.db.tables())
-        ents: dict[str, list[tuple]] = {}
-        rels: dict[str, list[tuple]] = {}
-        if "x_entities" in tables:
-            for r in self.db.query('SELECT para_hash, ord, start, "end", text, key, category, source, sent, verb, labels '
-                                   "FROM x_entities"):
-                ents.setdefault(r[0], []).append(r)
-            for r in self.db.query("SELECT para_hash, ord, subj, verb, obj, sent FROM x_relations"):
-                rels.setdefault(r[0], []).append(r)
-        results: dict[str, ParaResult] = {}
-        out: dict[str, ParaResult] = {}
-        for pid in self.paragraphs:
-            h = self.hashes.get(pid, "")
-            res = results.get(h)
-            if res is None:
-                res = results[h] = to_para_result(ents.get(h, []), rels.get(h, []))
-            out[pid] = res
-        return out
+        results = read_results(self.db)
+        return {pid: results.get(self.hashes.get(pid, "")) or ParaResult() for pid in self.paragraphs}
 
     def _load_findings(self) -> list[security.Finding]:
         if "security" not in enabled_modules(self.settings.values) or "a_findings" not in self.db.tables():

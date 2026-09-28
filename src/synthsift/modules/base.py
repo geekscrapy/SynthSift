@@ -110,8 +110,6 @@ class Module(ABC):
     helper_of: ClassVar[str] = ""
     #: position on the Settings page (within its kind)
     order: ClassVar[int] = 100
-    #: settings key of the on/off switch (``mod.<name>`` unless a legacy key exists)
-    enable_key: ClassVar[str] = ""
     tables: ClassVar[tuple[Table, ...]] = ()
     #: this module's own settings fields
     options: ClassVar[tuple[Field, ...]] = ()
@@ -128,7 +126,7 @@ class Module(ABC):
     # ---------------------------------------------------------------- API
     @classmethod
     def switch(cls) -> str:
-        return cls.enable_key or f"mod.{cls.name}"
+        return f"mod.{cls.name}"
 
     @classmethod
     def switched_on(cls, cfg: dict[str, Any]) -> bool:

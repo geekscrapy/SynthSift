@@ -17,7 +17,6 @@ class RegexModule(Module):
     label = "Pattern extractors"
     description = "Regular expressions for file paths, URLs, IPs, hashes, CVEs, env vars, inline code … plus your own patterns."
     kind = "extraction"
-    enable_key = "use_regex"
     order = 10
     chunk_size = 5000
     tables = (span_table("x_regex", "Pattern matches (entity candidates)"),)

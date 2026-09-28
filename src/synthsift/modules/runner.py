@@ -33,9 +33,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from ..db import Batch, Storage
+from ..db import Batch, Storage, open_storage
 from ..db.schema import MODULE_DONE, PARA_TEXT
-from .base import Deps, Module, ParaIn, enabled_modules, fingerprint, registry
+from ..nlp.pipeline import ParaResult
+from .base import Deps, Module, ParaIn, enabled_modules, fingerprint, para_hash, registry
+from .entities import read_results
 
 log = logging.getLogger(__name__)
 
@@ -450,3 +452,27 @@ def module_stats(storage: Storage, cfg: dict[str, Any]) -> list[dict[str, Any]]:
         info["requires"] = cls(cfg).dependencies(enabled | {name})
         out.append(info)
     return out
+
+
+def analyze(items, cfg: dict[str, Any] | None = None) -> dict[str, ParaResult]:
+    """Run the enabled modules on a few paragraphs in a throwaway in-memory database and return
+    the entities and relations per paragraph id – for tests and the REPL.
+
+    items: (paragraph id, text, role, is_code).  cfg: settings overrides on top of the defaults.
+    Corpus modules that need conversations (security) are skipped.
+    """
+    from ..settings import defaults
+
+    st = open_storage(None)
+    try:
+        st.ensure(PARA_TEXT)
+        ids, rows = {}, {}
+        for pid, text, role, code in items:
+            ids[pid] = h = para_hash(text, role, code)
+            rows[h] = (h, text, role, bool(code), None)
+        st.insert(Batch.from_rows(PARA_TEXT, list(rows.values())))
+        Runner(st, {**defaults(), **(cfg or {})}).run()
+        results = read_results(st)
+    finally:
+        st.close()
+    return {pid: results.get(h) or ParaResult() for pid, h in ids.items()}

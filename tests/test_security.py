@@ -1,6 +1,7 @@
 from synthsift.models import Block, Conversation, Message
+from synthsift.modules import enabled_modules
+from synthsift.modules.runner import analyze
 from synthsift.nlp import security
-from synthsift.nlp.pipeline import Analyzer
 from synthsift.segment import segment
 from synthsift.settings import defaults
 
@@ -9,7 +10,7 @@ def run(*messages, **cfg_overrides):
     conv = Conversation(id="c1", messages=list(messages))
     cfg = {**defaults(), **cfg_overrides}
     evs, paras = segment(conv, cfg)
-    analysis = Analyzer(cfg).analyze([(p.id, p.text, p.role, p.code) for p in paras])
+    analysis = analyze([(p.id, p.text, p.role, p.code) for p in paras], cfg)
     return security.scan([conv], {"c1": evs}, {p.id: p for p in paras}, analysis, cfg)
 
 
@@ -73,7 +74,7 @@ def test_watchlist_and_severity_floor():
 
 
 def test_disabled():
-    assert run(call("rm -rf /"), sec_enabled=False) == []
+    assert "security" not in enabled_modules({**defaults(), "mod.security": False})
 
 
 def test_findings_flow_into_graph(sample_workspace):

@@ -652,6 +652,9 @@ class QuestionsModule(Module):
   `needs_corpus = True`), and `ctx.progress()` / `ctx.note()` to report back.
 - **`setup()`** loads models once per process. `fingerprint_extra(ctx)` adds
   outside state, such as files, to the fingerprint.
+- **To see entities for a few strings**, `synthsift.modules.runner.analyze([(id, text,
+  role, is_code), …], {settings})` runs the enabled modules in a throwaway in-memory
+  database and returns the mentions and relations per id.
 - **To try it out**, run it against an in-memory database and inspect the
   tables:
 

@@ -451,8 +451,6 @@ class SecurityScanner:
 
 def scan(conversations, events_by_conv, paragraphs, analysis, cfg) -> list[Finding]:
     """Scan every event and return findings in conversation/event order."""
-    if not cfg.get("sec_enabled", True):
-        return []
     scanner = SecurityScanner(cfg)
     findings: list[Finding] = []
     for conv in conversations:
