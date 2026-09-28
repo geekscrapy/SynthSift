@@ -33,7 +33,7 @@ new one is a single file (see [Writing an enrichment module](#writing-an-enrichm
 
 <table>
 <tr>
-<td width="50%"><b>Tag and comment on anything</b>: right-click a turn, node, term or session<br><img src="docs/tagging.jpg" alt="Right-click tag menu with a comment"></td>
+<td width="50%"><b>Right-click to tag, comment or filter</b>: any graph node or table row<br><img src="docs/tagging.jpg" alt="Right-click menu with filters, tags and a comment"></td>
 <td width="50%"><b>Review it on the timeline</b>: tagged rows and findings, day by day<br><img src="docs/timeline.jpg" alt="Timeline of tagged rows and findings"></td>
 </tr>
 <tr>
@@ -379,11 +379,12 @@ Sessions, turns (messages, thoughts, tool calls and results) and terms
 
 - **Tags**: **bad**, **suspicious**, **seen** and **ignore** are built in; add
   your own with **+** in the Tags panel (e.g. `escalated`).
-- **Right-click** tags anything: a graph node, a transcript turn, an
-  underlined term, a finding, a conversation in the tree, or a row on the Nodes
-  or Timeline page. The menu has tag checkboxes and a comment box.
-- **The selection card** (and each page's detail pane) has one-click tag
-  checkboxes and a comment field that saves when you leave it.
+- **Right-click** a graph node, or a row on the Nodes or Timeline page. The
+  menu has tag checkboxes and a comment box.
+- **Filter on**: the same menu narrows every page to the item's host, user,
+  agent, session or days. The snackbar's *Undo* puts the previous scope back.
+- **Side panes** (the selection card, the transcript and each page's detail
+  pane) show tags and comments; tag from the graph or the tables.
 - **What you see**:
   - Tagged nodes carry coloured dots in the graph.
   - Tagged turns show their tags and comment in the transcript.
@@ -397,7 +398,7 @@ Sessions, turns (messages, thoughts, tool calls and results) and terms
   directory, shared by every open page and tab, and exported with each page's
   CSV.
 
-![Right-click tag menu on a Claude Code turn, with a comment](docs/tagging.jpg)
+![Right-click menu on a graph node: filter on its host, user, agent, session or days, tags and a comment](docs/tagging.jpg)
 ![Graph filtered to items tagged bad, suspicious or escalated; the selected tool call shows its tags and comment](docs/tag-filter.jpg)
 
 ### Nodes (`/nodes`)
@@ -415,7 +416,8 @@ extracted terms.
     severity and category; IOC / keyword lists; layers; node types (shift-click
     for "only this type"); and a minimum mention count for terms.
 - **Tag**
-  - Right-click a row to tag it or comment on it.
+  - Right-click a row to tag it, comment on it, or filter every page to its
+    host, user, agent, session or days.
   - Check rows (shift-click for a range, or use the header box for the whole
     page, then *Select all*) and use the bulk tag bar, or right-click the
     selection. Its chips show whether all, some or none of the rows carry

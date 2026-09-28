@@ -65,7 +65,7 @@
     promptTag: async () => (prompt("New tag name") || "").trim().toLowerCase() || null, // the server adds unknown tags
   });
   const { kind, kindOf, convMatchesFilter, convVisible, windowOn, inWindow, paraVisible, nodeInWindow, targetOf, annOf, tagsFor, tagInfo, nodeTags,
-    loadAnnotations, tagChipsHTML, openTagMenu } = M;
+    loadAnnotations, tagChipsHTML } = M;
   const chan = "BroadcastChannel" in window ? new BroadcastChannel("synthsift") : null;
   const WIN_ID = Math.random().toString(36).slice(2);
 
@@ -750,11 +750,10 @@
     network.on("oncontext", (p) => {
       const id = network.getNodeAt(p.pointer.DOM);
       if (p.event && p.event.preventDefault) p.event.preventDefault();
-      const target = id && targetOf(id);
-      if (!target) return;
+      if (!id || !S.nodes.has(id)) return; // clusters filter on a click already
       const r = $("graph").getBoundingClientRect();
       hideTip();
-      openTagMenu(target, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y);
+      M.itemMenu(id, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y, { target: targetOf(id), onFilter: filterOn });
     });
     network.on("doubleClick", (p) => {
       if (!p.nodes.length) return;
@@ -1285,12 +1284,8 @@
       body.append(el("div", { class: "sel-findings" }, fs.slice(0, 6).map((f) =>
         el("div", { class: `f sev-${f.severity}` }, el("span", { class: "sev-chip" }, f.severity), el("span", {}, f.label + " – " + f.detail)))));
     }
-    // tags as one-click toggles + a comment box
-    const target = targetOf(n.id);
-    if (target) {
-      body.append(...M.tagEditor(target, el("button", { class: "chip sm", title: "More tags / new tag",
-        onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); openTagMenu(target, r.left, r.bottom + 4); } }, icon("more_horiz"), "More"), { titles: true }));
-    }
+    const ann = M.annotationView(targetOf(n.id));
+    if (ann) body.append(ann);
     box.replaceChildren(
       el("span", { class: "ico", style: { background: n.type === "conversation" && convs[0] ? convs[0].color : k.color } }, icon(k.icon)),
       body,
@@ -1421,7 +1416,6 @@
         `<span class="tag-row">${tagChipsHTML(tags)}</span>` +
         (ev.call_id ? `<span class="tag mono">${esc(ev.call_id)}</span>` : "") +
         `<span class="ts">${esc(fmtTime(ev.ts))}</span>` +
-        `<button class="icon-btn sm tagbtn${tags.length || (ann && ann.comment) ? " has" : ""}" data-tagmenu="${esc(evTarget)}" title="Tag or comment on this turn (or right-click it)"><span class="msi xs">sell</span></button>` +
         `<button class="icon-btn sm inspect" data-inspect="${esc(ev.id)}" title="What the enrichment modules extracted from this turn"><span class="msi xs">data_object</span></button>` +
         `<button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button></div>` +
         (ann && ann.comment ? `<div class="comment-note"><span class="msi">comment</span>${esc(ann.comment)}</div>` : "") +
@@ -1644,8 +1638,6 @@
 
   function onPanelClick(ev) {
     const t = ev.target;
-    const tm = t.closest("[data-tagmenu]");
-    if (tm) { const r = tm.getBoundingClientRect(); openTagMenu(tm.dataset.tagmenu, r.left, r.bottom + 4); return; }
     const ins = t.closest("[data-inspect]");
     if (ins) { const e2 = S.events.get(ins.dataset.inspect); if (e2) SS.inspect(e2.p, { title: e2.label, paras: S.paras }); return; }
     const fr = t.closest("[data-finding]");
@@ -1891,6 +1883,12 @@
     }
   }
 
+  // right-click "Filter on …": narrow the shared scope, with an undo
+  function filterOn(patch, what) {
+    const prev = S.filter;
+    setConvFilter(SS.narrowScope(S.filter, patch));
+    snack(`Showing only ${what}`, { label: "Undo", run: () => setConvFilter(prev) }, 6000);
+  }
   function setConvFilter(f) {
     S.filter = f;
     store.set("convFilter", f);
@@ -2186,32 +2184,10 @@
     });
     // host / user / agent filters
     for (const [key, id] of [["host", "f-host"], ["user", "f-user"], ["harness", "f-harness"]]) {
-      $(id).addEventListener("change", (e) => {
-        const f = { ...S.filter, [key]: e.target.value, conv: "" };
-        if (key === "host") { f.user = ""; f.harness = ""; }
-        if (key === "user") f.harness = "";
-        setConvFilter(f);
-      });
+      $(id).addEventListener("change", (e) => setConvFilter(SS.narrowScope(S.filter, { [key]: e.target.value })));
     }
-    // right-click tagging: graph, transcript / matches / findings, conversation tree
+    // right-click on the graph opens the item menu (see "oncontext"), not the browser's
     $("graph").addEventListener("contextmenu", (e) => e.preventDefault());
-    $("panel-body").addEventListener("contextmenu", (e) => {
-      const t = e.target;
-      let target = null;
-      const ent = t.closest(".ent");
-      const fr = t.closest("[data-finding]");
-      const msg = t.closest("[data-event]");
-      const para = t.closest("[data-pid]");
-      if (ent) target = "term:" + ent.dataset.node;
-      else if (fr) target = "event:" + S.data.findings[Number(fr.dataset.finding)].event;
-      else if (msg) target = "event:" + msg.dataset.event;
-      else if (para && S.paras.get(para.dataset.pid)) target = "event:" + S.paras.get(para.dataset.pid).e;
-      if (target) { e.preventDefault(); openTagMenu(target, e.clientX, e.clientY); }
-    });
-    $("tree").addEventListener("contextmenu", (e) => {
-      const row = e.target.closest("[data-conv]");
-      if (row) { e.preventDefault(); openTagMenu("conv:" + row.dataset.conv, e.clientX, e.clientY); }
-    });
     $("tag-new").addEventListener("click", async () => {
       if (await M.newTag()) { renderTagChips(); renderSelection(); broadcast({ type: "annotations" }); }
     });

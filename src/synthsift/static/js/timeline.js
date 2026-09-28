@@ -338,7 +338,7 @@
       el("div", { class: "detail-head" }, el("span", { class: "ico", style: { background: "#80868b" } }, icon("label")),
         el("div", { class: "grow" }, el("div", { class: "title" }, a ? a.label : key), el("div", { class: "sub" }, el("span", { class: "tag" }, "not in the current graph"))),
         el("button", { class: "icon-btn sm", title: "Close", onclick: closeDetail }, icon("close", "sm"))),
-      el("div", { class: "detail-body" }, el("h4", {}, icon("sell", "xs"), "Tags & comment"), WS.tagEditor(key)));
+      el("div", { class: "detail-body" }, ...WS.annotationSection(key)));
   }
   function renderDetail(fresh = false) {
     const pane = $("detail");
@@ -410,7 +410,7 @@
       if (!tr) return;
       e.preventDefault();
       if (P.checked.size > 1 && P.checked.has(tr.dataset.key)) WS.bulkMenu(e.clientX, e.clientY, checkedTargets, { withNewTag: false });
-      else { const r = rowByKey(tr.dataset.key); if (r) WS.openTagMenu(r.target, e.clientX, e.clientY); }
+      else { const r = rowByKey(tr.dataset.key); if (r) WS.itemMenu(r.target, e.clientX, e.clientY, r.target); }
     });
     $("btn-csv").addEventListener("click", exportCSV);
     $("btn-cols").addEventListener("click", (e) => { e.stopPropagation(); WS.columnsMenu(e.currentTarget, COLS, P.hiddenCols, () => { save(); renderGrid(); }); });

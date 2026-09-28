@@ -32,7 +32,7 @@ const WS = (() => {
     listeners: new Set(),
   };
   const M = SS.model(W, { onSaved: () => { broadcast({ type: "annotations" }); emit("annotations"); }, promptTag: newTag });
-  const { kindOf, convVisible, paraVisible, targetOf, annOf, tagsFor, labelFor, seenRange, loadAnnotations, toggleTag, tagChipsHTML, chainEl } = M;
+  const { kindOf, convVisible, paraVisible, targetOf, annOf, tagsFor, labelFor, seenRange, loadAnnotations, tagChipsHTML, chainEl } = M;
 
   /* ------------------------------------------------------------- loading */
   async function load() {
@@ -87,10 +87,7 @@ const WS = (() => {
   }
 
   function setFilter(patch, { broadcastIt = true } = {}) {
-    W.filter = { ...W.filter, ...patch };
-    if ("host" in patch) { W.filter.user = patch.user || ""; W.filter.harness = patch.harness || ""; }
-    else if ("user" in patch) W.filter.harness = patch.harness || "";
-    if (("host" in patch || "user" in patch || "harness" in patch) && !("conv" in patch)) W.filter.conv = "";
+    W.filter = SS.narrowScope(W.filter, patch);
     store.set("convFilter", W.filter);
     if (broadcastIt) broadcast({ type: "filters", hiddenConvs: [...W.hiddenConvs], filter: W.filter });
     emit("filters");
@@ -153,9 +150,18 @@ const WS = (() => {
     return name;
   }
 
-  /** tag checkboxes + comment box for a detail pane */
-  const tagEditor = (target) => el("div", {}, ...M.tagEditor(target,
-    el("button", { class: "chip sm", onclick: async () => { const n = await newTag(); if (n) toggleTag(target, n); } }, icon("add"), "New tag")));
+  /** right-click menu for a table row: filter on its host / user / agent / session / days, tags and a comment */
+  const itemMenu = (ref, x, y, target) => M.itemMenu(ref, x, y, { target, onFilter: filterOn });
+  function filterOn(patch, what) {
+    const prev = { ...W.filter };
+    setFilter(patch);
+    snack(`Showing only ${what}`, { label: "Undo", run: () => setFilter(prev) }, 6000);
+  }
+  /** "Tags & comment" of a detail pane, read-only */
+  function annotationSection(target) {
+    const view = M.annotationView(target);
+    return view ? [el("h4", {}, icon("sell", "xs"), "Tags & comment"), view] : [];
+  }
 
   /** tag filter chips; clicking toggles the shared tag filter */
   function renderTagFilter(container, { counts = null } = {}) {
@@ -455,7 +461,7 @@ const WS = (() => {
     const body = el("div", { class: "detail-body" });
     if (first) body.append(el("div", { class: "cell-muted" }, `Seen ${fmtTime(first)}${last && last !== first ? " – " + fmtTime(last) : ""}`));
     if (fs.length) body.append(el("h4", {}, icon("shield", "xs"), "Findings", el("span", { class: "count" }, fmt(fs.length))), ...fs.slice(0, 20).map((f) => findingCard(f)));
-    if (target) body.append(el("h4", {}, icon("sell", "xs"), "Tags & comment"), tagEditor(target));
+    body.append(...annotationSection(target));
     body.append(el("div", { class: "detail-actions" },
       el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id }) }, icon("hub"), "Show in graph"),
       el("button", { class: "btn text sm", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(n.label); snack("Copied"); } }, icon("content_copy"), "Copy")));
@@ -527,7 +533,7 @@ const WS = (() => {
       return el("label", { class: "ctx-step" }, el("span", { class: "hash" }, "#"), label, inp);
     };
     drawCtx();
-    body.append(el("h4", {}, icon("sell", "xs"), "Tags & comment"), tagEditor("event:" + evId),
+    body.append(...annotationSection("event:" + evId),
       el("div", { class: "detail-actions" },
         el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id: evId, para: ev.p[0] }) }, icon("hub"), "Show in graph")),
       el("h4", {}, icon("forum", "xs"), "In context", el("span", { class: "grow" }), stepper("before", "before"), stepper("after", "after")), ctxBox);
@@ -551,7 +557,7 @@ const WS = (() => {
           .flatMap(([k, v]) => [el("dt", {}, k.replace(/_/g, " ")), el("dd", {}, String(v))])),
       fs.length ? el("div", { class: "sec-summary", style: { marginTop: "12px" } }, [...SS.SEV_ORDER].reverse().filter((s) => bySev.get(s))
         .map((s) => el("span", { class: `chip sm sev-${s}` }, el("span", { class: "sev-chip" }, s), el("span", { class: "count" }, fmt(bySev.get(s)))))) : null,
-      el("h4", {}, icon("sell", "xs"), "Tags & comment"), tagEditor("conv:" + cid),
+      ...annotationSection("conv:" + cid),
       el("div", { class: "detail-actions" }, el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id: "conv:" + cid }) }, icon("hub"), "Show in graph")));
     if (tagged.length) {
       body.append(el("h4", {}, icon("chat", "xs"), "Tagged turns", el("span", { class: "count" }, fmt(tagged.length))),
@@ -566,7 +572,7 @@ const WS = (() => {
     kindOf, kindGroup: M.kindGroup, convVisible, nodeVisible, inWindow: M.inWindow, windowOn: M.windowOn,
     eventVisible: M.eventVisible, paraVisible,
     targetOf, annOf, tagsFor, nodeTags: M.nodeTags, labelFor, convFor: M.convFor, tsFor: M.tsFor, seenRange,
-    tagChipsHTML, openTagMenu: M.openTagMenu, tagEditor, renderTagFilter,
+    tagChipsHTML, itemMenu, annotationSection, renderTagFilter,
     findingsForNode, chainEl, endpointLabel: M.endpointLabel, showInGraph,
     wireTopbar, scopeSection, tagsHeading, renderScope, scopeActive, resetScope, renderCatChips, pager, columnsMenu,
     pageCheckbox, rowCheckbox, toggleCheck, bulkBar, bulkMenu,

@@ -641,8 +641,6 @@ pre.layout-hint { font-family: var(--mono); font-size: 12px; line-height: 18px; 
 .chip.tagf.muted-chip { opacity: 0.55; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .msg-head .tag-row { margin-left: 4px; }
-.msg-head .tagbtn { margin-left: 0; opacity: 0.6; }
-.msg:hover .msg-head .tagbtn, .msg-head .tagbtn.has { opacity: 1; }
 .msg.tagged-bad > .msg-body, .msg.tagged-suspicious > .msg-body { box-shadow: inset 3px 0 0 var(--tagc); }
 .comment-note {
   margin: 4px 0 6px 32px; padding: 6px 10px; border-radius: var(--r-s); font-size: 12px; line-height: 17px;
@@ -650,16 +648,21 @@ pre.layout-hint { font-family: var(--mono); font-size: 12px; line-height: 18px; 
 }
 .comment-note .msi { font-size: 14px; vertical-align: -2px; margin-right: 4px; color: var(--on-surface-variant); }
 .ent.tagged { background: color-mix(in srgb, var(--tagc) 20%, transparent); border-radius: 3px; }
-.sel-tags { margin-top: 10px; }
-.sel-tags .chip { height: 28px; }
-.sel-tags .chip.on { background: color-mix(in srgb, var(--tag) 20%, transparent); border-color: var(--tag); color: var(--on-surface); }
-.sel-tags .chip .msi { font-size: 16px; }
-.sel-comment { width: 100%; margin-top: 8px; }
+.ann-view { margin-top: 8px; }
+.ann-view .comment-note { margin: 6px 0 0; }
 .sel-findings { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .sel-findings .f { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--on-surface-variant); }
 
-/* context (tag) menu */
-.tag-menu { min-width: 260px; max-width: 320px; padding: 6px 0; }
+/* right-click menu: filters, tags and a comment */
+.tag-menu { min-width: 260px; max-width: 340px; padding: 6px 0; }
+.tag-menu .tm-sub { padding: 8px 16px 2px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--on-surface-variant); }
+.tag-menu .tm-sub + button { margin-top: 2px; }
+.tag-menu button.im-filter { height: 32px; gap: 10px; }
+.tag-menu button.im-filter .msi { font-size: 18px; }
+.tag-menu button.im-filter:disabled { cursor: default; color: var(--on-surface-variant); background: transparent; }
+.tag-menu .im-key { width: 52px; flex: none; font-size: 12px; color: var(--on-surface-variant); }
+.tag-menu .im-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-menu .im-note { padding: 2px 16px 4px 44px; font-size: 12px; color: var(--on-surface-variant); }
 .tag-menu .tm-head { padding: 6px 16px 8px; font-size: 12px; color: var(--on-surface-variant); border-bottom: 1px solid var(--outline-variant); margin-bottom: 4px; }
 .tag-menu .tm-head b { display: block; color: var(--on-surface); font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-menu button { height: 36px; }
@@ -717,7 +720,6 @@ body.panel-only .panel { width: 100%; flex: 1 1 auto; }
   .tab:not(.on) .tab-label { display: none; }
   .tab { padding: 0 10px; }
 }
-textarea.sel-comment { min-height: 44px; height: 44px; resize: vertical; font-family: var(--font); font-size: 13px; }
 .layout.dock-bottom.popped { grid-template-rows: minmax(0, 1fr) 0 0; }
 /* clustering */
 .cluster-select { flex: none; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent);

@@ -435,10 +435,7 @@
       if (!tr) return;
       e.preventDefault();
       if (P.checked.size > 1 && P.checked.has(tr.dataset.id)) WS.bulkMenu(e.clientX, e.clientY, checkedTargets);
-      else {
-        const t = WS.targetOf(tr.dataset.id);
-        t ? WS.openTagMenu(t, e.clientX, e.clientY) : snack("Tool hubs can't be tagged – tag the individual calls instead.");
-      }
+      else WS.itemMenu(tr.dataset.id, e.clientX, e.clientY, WS.targetOf(tr.dataset.id));
     });
     $("btn-csv").addEventListener("click", exportCSV);
     $("btn-cols").addEventListener("click", (e) => { e.stopPropagation(); WS.columnsMenu(e.currentTarget, COLS, P.hiddenCols, () => { save(); renderGrid(); }); });

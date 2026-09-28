@@ -138,6 +138,14 @@ const SS = (() => {
   // conversation and a time window (from / to, ISO times, "to" exclusive). Pages also accept these as URL parameters.
   const SCOPE_KEYS = ["host", "user", "harness", "conv", "from", "to"];
   const emptyScope = () => Object.fromEntries(SCOPE_KEYS.map((k) => [k, ""]));
+  /** `filter` with `patch` applied; a broader key clears the narrower ones it does not set (host > user > agent > conversation) */
+  function narrowScope(filter, patch) {
+    const f = { ...filter, ...patch };
+    if ("host" in patch) { f.user = patch.user || ""; f.harness = patch.harness || ""; }
+    else if ("user" in patch) f.harness = patch.harness || "";
+    if (("host" in patch || "user" in patch || "harness" in patch) && !("conv" in patch)) f.conv = "";
+    return f;
+  }
   /** scope values given in a page's URL (?from=…&to=…&host=…), or null */
   function scopeFromURL(params) {
     const patch = {};
@@ -527,45 +535,95 @@ const SS = (() => {
     const tagChipsHTML = (tags, inherited = null) => tags.map((t) => (inherited && inherited.has(t)
       ? `<span class="tag-chip inherited" style="--tag:${esc(tagInfo(t).color)}" title="Inherited from the session">${esc(t)}</span>`
       : `<span class="tag-chip" style="--tag:${esc(tagInfo(t).color)}">${esc(t)}</span>`)).join("");
+    /** a target's tags and comment, read-only; null when it has neither (tagging is done from the right-click menu) */
+    function annotationView(target) {
+      const a = target && annOf(target);
+      if (!a || (!a.tags.length && !a.comment)) return null;
+      return el("div", { class: "ann-view" }, a.tags.length ? el("div", { class: "tag-row", html: tagChipsHTML(a.tags) }) : null,
+        a.comment ? el("div", { class: "comment-note" }, icon("comment"), a.comment) : null);
+    }
+
+    /* right-click menu */
+    /** the conversations and time span [first, last] of a node id or tag target */
+    function scopeOf(ref) {
+      const id = ref.replace(/^(term|event):/, "");
+      if (id.startsWith("conv:")) {
+        const cid = id.slice(5);
+        let lo = null, hi = null;
+        for (const ev of G.events.values()) {
+          if (ev.c !== cid || !ev.ts) continue;
+          if (!lo || ev.ts < lo) lo = ev.ts;
+          if (!hi || ev.ts > hi) hi = ev.ts;
+        }
+        return { convs: G.convs.has(cid) ? [cid] : [], span: [lo, hi] };
+      }
+      const n = G.nodes.get(id);
+      const ev = G.events.get(n && n.event ? n.event : id);
+      if (ev) return { convs: [ev.c], span: [ev.ts, ev.ts] };
+      return { convs: (n && n.conv) || [], span: n ? seenRange(id) : [null, null] };
+    }
     const MENU_KIND = { conv: "Session", event: "Turn", term: "Term" };
-    /** right-click menu: tag checkboxes, "New tag…" and a comment */
-    function openTagMenu(target, x, y) {
-      if (!target) return;
+    const FILTER_ROWS = [["host", "computer", "Host"], ["user", "person", "User"], ["harness", "terminal", "Agent"], ["conv", "forum", "Session"]];
+    const dayStart = (ts, add = 0) => { const d = new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + add).toISOString(); };
+    const shortDay = (ts) => new Date(ts).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+    /** right-click menu for a node or table row (`ref`: node id or tag target): "Filter on" its host, user, agent,
+     *  session or days, then tag checkboxes, "New tag…" and a comment. `target` is null for things that cannot be
+     *  tagged (tool hubs); `onFilter(patch, what)` narrows the shared scope. */
+    function itemMenu(ref, x, y, { target = null, onFilter }) {
       closeMenus();
-      const what = target.split(":", 1)[0];
+      const n = G.nodes.get(ref);
+      const label = n ? n.label : target ? labelFor(target) : ref;
+      const what = n ? kindOf(n).label : MENU_KIND[ref.split(":", 1)[0]] || "Item";
       const menu = el("div", { class: "menu tag-menu", role: "menu" });
+      const filterItem = (ic, key, text, patch, on) => el("button", {
+        class: "im-filter", role: "menuitem", disabled: on, title: on ? "Already filtered on this" : `Show only ${key.toLowerCase()} ${text}`,
+        onclick: () => { menu.remove(); onFilter(patch, `${key.toLowerCase()} “${text}”`); },
+      }, icon(on ? "check" : ic), el("span", { class: "im-key" }, key), el("span", { class: "grow im-val" }, text));
+      // filters: the item's conversations in the current scope (all of them if none is)
+      const { convs, span } = scopeOf(ref);
+      const cs = convs.map((id) => G.convs.get(id)).filter(Boolean);
+      const inScope = cs.filter((c) => convVisible(c.id));
+      const filters = [];
+      for (const [key, ic, name] of FILTER_ROWS) {
+        const vals = new Map();
+        for (const c of inScope.length ? inScope : cs) {
+          const v = key === "conv" ? c.id : c[key];
+          if (!v || vals.has(v)) continue;
+          vals.set(v, key === "conv" ? [c.title, { host: c.host, user: c.user, harness: c.harness, conv: c.id }] : [v, { [key]: v }]);
+        }
+        for (const [v, [text, patch]] of [...vals].slice(0, 3)) filters.push(filterItem(ic, name, text, patch, G.filter[key] === v));
+        if (vals.size > 3) filters.push(el("div", { class: "im-note" }, `+ ${vals.size - 3} more ${name.toLowerCase()}s`));
+      }
+      const [lo, hi] = span;
+      if (lo) {
+        const patch = { from: dayStart(lo), to: dayStart(hi || lo, 1) };
+        const text = shortDay(lo) === shortDay(hi || lo) ? shortDay(lo) : `${shortDay(lo)} – ${shortDay(hi)}`;
+        filters.push(filterItem("schedule", "Time", text, patch, G.filter.from === patch.from && G.filter.to === patch.to));
+      }
       const render = () => {
+        const parts = [el("div", { class: "tm-head" }, what, el("b", { title: label }, label))];
+        if (filters.length) parts.push(el("div", { class: "tm-sub" }, "Filter on"), ...filters);
+        if (!target) {
+          parts.push(el("div", { class: "im-note" }, "Tool hubs can't be tagged – tag the individual calls instead."));
+          return menu.replaceChildren(...parts);
+        }
         const cur = new Set(tagsFor(target));
         const a = annOf(target);
-        const items = G.tags.map((t) => el("button", {
-          role: "menuitemcheckbox", "aria-checked": cur.has(t.name) ? "true" : "false",
-          onclick: async () => { await toggleTag(target, t.name); render(); },
-        }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
-          el("span", { class: "grow" }, t.name)));
         const ta = el("textarea", { class: "text-input", placeholder: "Analyst comment…" });
         ta.value = a ? a.comment : "";
-        menu.replaceChildren(
-          el("div", { class: "tm-head" }, `Tag ${MENU_KIND[what] || what}`, el("b", { title: labelFor(target) }, labelFor(target))),
-          ...items,
-          el("button", { onclick: async () => { const n = await promptTag(); if (n) { await toggleTag(target, n); render(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")),
+        menu.replaceChildren(...parts, el("div", { class: "tm-sub" }, "Tags"),
+          ...G.tags.map((t) => el("button", {
+            role: "menuitemcheckbox", "aria-checked": cur.has(t.name) ? "true" : "false",
+            onclick: async () => { await toggleTag(target, t.name); render(); },
+          }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
+            el("span", { class: "grow" }, t.name))),
+          el("button", { onclick: async () => { const t = await promptTag(); if (t) { await toggleTag(target, t); render(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")),
           el("div", { class: "tm-comment" }, ta, el("div", { class: "tm-actions" },
             el("button", { class: "btn text sm", onclick: async () => { await saveAnnotation(target, [], ""); menu.remove(); } }, "Clear all"),
             el("button", { class: "btn filled sm", onclick: async () => { await saveAnnotation(target, [...tagsFor(target)], ta.value); menu.remove(); snack("Comment saved"); } }, "Save comment"))));
       };
       render();
       placeMenu(menu, x, y);
-    }
-    /** one-click tag toggles (then `extra`, one more chip) and a comment box saved when it changes: [chips, textarea] */
-    function tagEditor(target, extra, { titles = false } = {}) {
-      const cur = new Set(tagsFor(target));
-      const chips = el("div", { class: "chip-row sel-tags" }, G.tags.map((t) => el("button", {
-        class: `chip sm${cur.has(t.name) ? " on" : ""}`, style: { "--tag": t.color }, title: titles ? `Tag as ${t.name}` : undefined,
-        role: "checkbox", "aria-checked": cur.has(t.name) ? "true" : "false", onclick: () => toggleTag(target, t.name),
-      }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), t.name)), extra);
-      const ta = el("textarea", { class: "text-input sel-comment", placeholder: "Analyst comment (saved when you leave the box)…" });
-      ta.value = (annOf(target) || {}).comment || "";
-      ta.addEventListener("change", () => saveAnnotation(target, [...tagsFor(target)], ta.value));
-      return [chips, ta];
     }
 
     /* findings */
@@ -600,14 +658,14 @@ const SS = (() => {
     return {
       kind, kindOf, kindGroup, avatarHTML, convMatchesFilter, convVisible, windowOn, inWindow, eventVisible, paraVisible, nodeInWindow,
       targetOf, annOf, tagsFor, tagInfo, nodeTags, seenRange, labelFor, convFor, tsFor,
-      loadAnnotations, putAnnotation, toggleTag, newTag, tagChipsHTML, openTagMenu, tagEditor,
+      loadAnnotations, putAnnotation, toggleTag, newTag, tagChipsHTML, annotationView, itemMenu,
       endpointLabel, chainEl, findingWhere, findingCard,
     };
   }
 
   return {
     store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips,
-    fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
+    fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, narrowScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
     SEV_ORDER, SEV_COLOR, sevRank, worstSeverity, STRUCTURAL, KIND_GROUPS, LAYERS, ROLE_ICON, kindKey, loadKinds, model,
   };
 })();
