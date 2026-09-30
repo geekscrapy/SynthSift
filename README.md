@@ -18,8 +18,8 @@ secrets, sensitive-file access and destructive commands**, draws them as
 and lets you **tag and comment** on sessions, turns and terms. Three full-page
 views sit next to the graph: a **Dashboard** with activity over time and the
 long tail of rare terms, list hits and tools; **Nodes**, a sortable, filterable
-table of every node; and **Timeline**, everything tagged plus the findings, row
-by row.
+table of every node; and **Timeline**, every turn of every conversation in time
+order, with its findings, tags and comments.
 
 Every enrichment step is a **module** that stores its results per paragraph in
 its own table of a persistent **DuckDB** database: pattern extraction, spaCy,
@@ -34,7 +34,7 @@ new one is a single file (see [Writing an enrichment module](#writing-an-enrichm
 <table>
 <tr>
 <td width="50%"><b>Right-click to tag, comment or filter</b>: any graph node or table row<br><img src="docs/tagging.jpg" alt="Right-click menu with filters, tags and a comment"></td>
-<td width="50%"><b>Review it on the timeline</b>: tagged rows and findings, day by day<br><img src="docs/timeline.jpg" alt="Timeline of tagged rows and findings"></td>
+<td width="50%"><b>Review it on the timeline</b>: every turn in time order, filtered column by column<br><img src="docs/timeline.jpg" alt="Timeline of every turn, with column filters"></td>
 </tr>
 <tr>
 <td><b>Filter the graph by tag</b>: everything else fades<br><img src="docs/tag-filter.jpg" alt="Graph filtered to bad, suspicious and escalated items"></td>
@@ -438,22 +438,30 @@ extracted terms.
 
 ### Timeline (`/timeline`)
 
-Every tagged session, turn and term, plus the security findings, in time order,
-row by row and grouped by day.
+Every turn of every conversation in scope (user messages, LLM replies,
+thoughts, tool calls and results, system prompts) in time order, grouped by
+day, with its findings, tags and comment. A turn without a timestamp, such as a
+system prompt, sits at the time of the next turn in its conversation (marked ≈).
 
-- **Filter** by row kind (sessions / turns / terms / findings), by the shared
-  scope, time window and tag filters, by comments only, and by findings
-  severity and category. Sort oldest or newest first.
-- **Tag** single rows or many at once, the same way as on the Nodes page.
-- **Detail pane**: a finding's `source → action → sink` chain, the turn's tags
-  and comment, and the turn in context, with adjustable **# before / # after**.
-- **CSV export**, including the chain for each finding.
+- **Scroll** to load more; rows arrive 200 at a time.
+- **Filter each column** from the row under the titles: text or `/regex/` for
+  the time, what was said, tags, host / user, agent and conversation, and lists
+  for the kind of turn and for findings (with or without, a minimum severity or
+  a category). The top search covers every column at once. The side rail holds
+  the shared scope, time window and tag filters, *With comments only*, and the
+  order (the *Time* title flips it too).
+- **Tag** single rows or many at once, the same way as on the Nodes page, or
+  right-click a row to tag it or filter on its host, user, agent, session or day.
+- **Detail pane**: the turn's findings with their `source → action → sink`
+  chains, its tags and comment, and the turn in context, with adjustable
+  **# before / # after**.
+- **CSV export** of the filtered turns, text included.
 
-![Timeline of tagged rows and findings, with a finding's chain and context](docs/timeline.jpg)
+![Timeline filtered to one conversation by its column filter, with a finding's chain and context](docs/timeline.jpg)
 
-Filtered to the analyst's decisions: turns and sessions tagged *bad* or
-*escalated*, across a Claude Code dev box, an OpenClaw home server and a CI
-runner, newest first:
+Filtered to the analyst's decisions: turns tagged *bad* or *escalated*, directly
+or through their session, across a Claude Code dev box, an OpenClaw home server
+and a CI runner, newest first:
 
 ![Timeline filtered by tag](docs/timeline-tags.jpg)
 

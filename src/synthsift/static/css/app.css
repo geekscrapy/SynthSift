@@ -848,6 +848,24 @@ body.panel-only .panel { width: 100%; flex: 1 1 auto; }
 .detail-body h4 .ctx-step .hash { color: var(--primary); font-weight: 500; }
 .bulk-bar b { font-weight: 500; margin-right: 4px; }
 .timeline-grid tbody td { vertical-align: top; }
+/* column filters under the titles; day rows stick below both header rows */
+.timeline-grid thead tr.filters th { top: 40px; padding: 0 6px 6px; }
+.timeline-grid tr.day td { top: var(--thead-h, 76px); }
+.col-filter {
+  width: 100%; min-width: 70px; height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--outline-variant);
+  background: var(--surface); color: var(--on-surface); font: inherit; font-size: 12px; font-weight: 400;
+}
+.col-filter:focus { outline: none; border-color: var(--primary); }
+.timeline-grid .filters th:nth-child(2) .col-filter { min-width: 104px; }
+.timeline-grid .filters th:nth-child(3) .col-filter { min-width: 120px; }
+.col-filter.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--surface)); }
+.timeline-grid tr.more td, .timeline-grid tr.empty td { cursor: default; text-align: center; color: var(--on-surface-variant); font-size: 12px; padding: 14px; }
+.timeline-grid tr.more:hover td, .timeline-grid tr.empty:hover td { background: transparent; }
+.cell-what .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+.cell-what .mono { font-family: var(--mono); font-size: 11.5px; }
+.cell-findings { min-width: 150px; max-width: 260px; }
+.cell-findings .f { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 2px; }
+.cell-findings .f-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .timeline-grid td:nth-child(2) { width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 9px; }
 .timeline-grid td:nth-child(3) { width: 1%; white-space: nowrap; padding-top: 8px; }
 .timeline-grid tr.f-row td:first-child { box-shadow: inset 3px 0 0 var(--sev); }
