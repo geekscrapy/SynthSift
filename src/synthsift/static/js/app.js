@@ -20,6 +20,7 @@
     nodes: new Map(),
     paraEnts: new Map(),
     edgesByNode: new Map(),
+    convNodes: new Map(), // conversation id -> its turns, thoughts and tool arguments (keyboard navigation)
     hiddenConvs: new Set(store.get("hiddenConvs", [])),
     hiddenKinds: new Set(store.get("hiddenKinds", [])),
     hiddenLayers: new Set(store.get("hiddenLayers", [])),
@@ -56,6 +57,9 @@
     clusterMode: store.get("clusterMode", null),
     clusters: new Map(),
     selectedCluster: null,
+    multi: false, // Ctrl+↓: the selected node and everything linked to it are selected
+    cycle: null, // Alt+←/→: { list, i } over the node the cycle started from and its links
+    thoughtReturn: null, // Ctrl+↑: { from, thought } to come back to
     litClusters: new Set(),
     litEdges: null,
     posCache: {},
@@ -317,8 +321,13 @@
       if (list) { S.paraPos.set(p.id, list.length); list.push(p.id); }
     }
     for (const e of g.events) S.events.set(e.id, e);
+    S.convNodes = new Map();
     for (const n of g.nodes) {
       S.nodes.set(n.id, n);
+      if (n.type !== "entity" && n.type !== "tool_hub" && n.conv && n.conv.length === 1) {
+        if (!S.convNodes.has(n.conv[0])) S.convNodes.set(n.conv[0], []);
+        S.convNodes.get(n.conv[0]).push(n);
+      }
       if (n.type === "entity") {
         for (const [pid, s, e] of n.occ) {
           if (!S.paraEnts.has(pid)) S.paraEnts.set(pid, []);
@@ -1231,6 +1240,7 @@
     if (!n) return;
     S.selected = id;
     S.selectedCluster = null;
+    S.multi = false;
     S.neighbors = new Set([id, ...(S.edgesByNode.get(id) || []).map((e) => (e.from === id ? e.to : e.from))]);
     if (network && S.visibleNodes.has(id)) {
       revealNode(id);
@@ -1257,6 +1267,7 @@
     if (!S.clusters.has(cid)) return;
     S.selected = null;
     S.selectedCluster = cid;
+    S.multi = false;
     S.neighbors = new Set([cid, ...network.getConnectedNodes(cid)]);
     S.matchSource = S.search ? searchSource() : null;
     network.selectNodes([cid]);
@@ -1301,6 +1312,7 @@
   function clearSelection() {
     S.selected = null;
     S.selectedCluster = null;
+    S.multi = false;
     S.neighbors = null;
     if (S.search) S.matchSource = searchSource();
     else S.matchSource = null;
@@ -1309,6 +1321,122 @@
     network && network.redraw();
     renderSelection();
     renderPanel();
+  }
+
+  /* ============================================== keyboard navigation */
+  // The thread of a conversation is its node and its turns in order; a thought or a tool argument sits between
+  // the turns around it (an argument just after its call). Terms are not on a thread: Alt+←/→ walks their links.
+  const THREAD_TYPES = new Set(["conversation", "user", "assistant", "system", "tool_call", "tool_result"]);
+  const threadConv = (n) => (n && n.type !== "entity" && n.type !== "tool_hub" && n.conv && n.conv.length === 1 ? n.conv[0] : null);
+  const threadPos = (n) => (n.type === "tool_arg" ? n.seq + 0.5 : n.seq);
+  function thread(cid, type = null) {
+    return (S.convNodes.get(cid) || []).filter((n) => S.visibleNodes.has(n.id) && (type ? n.type === type : THREAD_TYPES.has(n.type)))
+      .sort((a, b) => threadPos(a) - threadPos(b));
+  }
+  // what the graph draws for a node: itself, or the cluster it is hidden in
+  const drawnId = (id) => { const path = network && network.findNode(id); return path && path.length ? path[0] : id; };
+  function go(id) {
+    if (network && network.isCluster(id)) selectCluster(id); else selectNode(id);
+    const shown = drawnId(id);
+    const p = network && network.getPositions([shown])[shown];
+    if (!p) return;
+    const d = network.canvasToDOM(p), r = $("graph").getBoundingClientRect(), m = 70;
+    if (d.x < m || d.y < m || d.x > r.width - m || d.y > r.height - m) network.moveTo({ position: p, animation: { duration: 250, easingFunction: "easeInOutQuad" } });
+  }
+  const navHint = (text) => snack(text, null, 3500);
+
+  // ← / → (Shift: same kind of turn)
+  function stepThread(dir, sameType) {
+    const cur = S.nodes.get(S.selected);
+    if (!cur) return threadEnd(-dir, S.currentConv); // nothing selected: → starts at the beginning, ← at the end
+    const cid = threadConv(cur);
+    if (!cid) return navHint("Terms aren't on a conversation thread – Alt+← / Alt+→ steps through their links");
+    const list = thread(cid, sameType ? cur.type : null);
+    const i = list.indexOf(cur), pos = threadPos(cur);
+    const next = i >= 0 ? list[i + dir] : dir > 0 ? list.find((n) => threadPos(n) > pos) : list.findLast((n) => threadPos(n) < pos);
+    if (next) go(next.id);
+    else navHint(dir > 0 ? "End of the conversation" : "Start of the conversation");
+  }
+  // Ctrl+← / Ctrl+→, Home / End
+  function threadEnd(dir, cid = threadConv(S.nodes.get(S.selected)) || S.currentConv) {
+    const list = thread(cid);
+    if (list.length) go(list[dir > 0 ? list.length - 1 : 0].id);
+  }
+  // Ctrl+↑: the thought behind this turn; again: back where it came from
+  function toggleThought() {
+    const cur = S.nodes.get(S.selected);
+    if (!cur) return;
+    const vis = (id) => S.visibleNodes.has(id);
+    if (cur.type === "thought") {
+      const edges = S.edgesByNode.get(cur.id) || [];
+      const back = S.thoughtReturn && S.thoughtReturn.thought === cur.id && vis(S.thoughtReturn.from) ? S.thoughtReturn.from
+        : (edges.find((e) => e.type === "leads_to" && e.from === cur.id && vis(e.to)) || {}).to
+          || (edges.find((e) => e.type === "thinks" && e.to === cur.id && vis(e.from)) || {}).from;
+      S.thoughtReturn = null;
+      return back ? go(back) : navHint("This thought isn't linked to a turn");
+    }
+    const turn = cur.type === "tool_arg" ? cur.event : cur.id; // arguments share their call's thoughts
+    const edges = S.edgesByNode.get(turn) || [];
+    const bySeq = (ids) => ids.filter(vis).map((id) => S.nodes.get(id)).sort((a, b) => a.seq - b.seq);
+    const before = bySeq(edges.filter((e) => e.type === "leads_to" && e.to === turn).map((e) => e.from)); // reasoning that led here
+    const after = bySeq(edges.filter((e) => e.type === "thinks" && e.from === turn).map((e) => e.to)); // reasoning that followed
+    const t = before[before.length - 1] || after[0];
+    if (!t) return navHint("No thought is linked to this turn");
+    S.thoughtReturn = { from: cur.id, thought: t.id };
+    go(t.id);
+  }
+  // Ctrl+↓: select the node and everything linked to it (dragging one moves them all); again: just the node
+  function selectLinked() {
+    const id = S.selected || S.selectedCluster;
+    if (!id || !network) return;
+    const shown = drawnId(id);
+    if (S.multi) { S.multi = false; network.selectNodes([shown]); return; }
+    const ids = [shown, ...new Set(network.getConnectedNodes(shown).map(drawnId))];
+    network.selectNodes(ids);
+    S.multi = true;
+    navHint(`Selected ${plural(ids.length, "node")} – drag one to move them together`);
+  }
+  // Alt+← / Alt+→: clockwise through the links of the node the cycle started from, back round to it
+  function cycleLinked(dir) {
+    const cur = S.selected || S.selectedCluster;
+    if (!cur || !network) return;
+    let c = S.cycle;
+    if (!c || c.list[c.i] !== cur) {
+      const start = drawnId(cur);
+      const drawn = new Set(network.body.nodeIndices);
+      const nbs = [...new Set(network.getConnectedNodes(start).map(drawnId))].filter((id) => drawn.has(id) && id !== start);
+      const ps = network.getPositions([start, ...nbs]), o = ps[start];
+      const angle = (id) => (Math.atan2(ps[id].x - o.x, o.y - ps[id].y) + 2 * Math.PI) % (2 * Math.PI); // 0 = up, clockwise
+      c = S.cycle = { list: [cur, ...nbs.sort((a, b) => angle(a) - angle(b))], i: 0 };
+    }
+    if (c.list.length < 2) return navHint("Nothing is linked to this node");
+    c.i = (c.i + dir + c.list.length) % c.list.length;
+    go(c.list[c.i]);
+  }
+  // Alt+↑ / Alt+↓: the previous / next conversation in scope, at its start
+  function stepConversation(dir) {
+    const order = S.convOrder.filter((cid) => convVisible(cid) && thread(cid).length);
+    if (!order.length) return;
+    const i = order.indexOf(threadConv(S.nodes.get(S.selected)) || S.currentConv);
+    const cid = order[(Math.max(i, dir > 0 ? -1 : 0) + dir + order.length) % order.length];
+    go(thread(cid)[0].id);
+  }
+  function onNavKey(e) {
+    if (!network || S.panelOnly || e.metaKey) return false;
+    const k = e.key, horizontal = k === "ArrowLeft" || k === "ArrowRight", dir = k === "ArrowRight" || k === "ArrowDown" || k === "End" ? 1 : -1;
+    // macOS keeps Ctrl+arrows for Spaces and Mission Control, so Alt+Shift+arrows do the same as Ctrl+arrows
+    const ctrl = e.ctrlKey || (e.altKey && e.shiftKey), alt = e.altKey && !e.shiftKey;
+    if (horizontal && ctrl) threadEnd(dir);
+    else if (horizontal && alt) cycleLinked(dir);
+    else if (horizontal) stepThread(dir, e.shiftKey);
+    else if (k === "Home" || k === "End") threadEnd(dir);
+    else if (k === "ArrowUp" && ctrl) toggleThought();
+    else if (k === "ArrowDown" && ctrl) selectLinked();
+    else if ((k === "ArrowUp" || k === "ArrowDown") && alt) stepConversation(dir);
+    else if (k === "?") $("key-help").classList.toggle("hidden");
+    else return false;
+    e.preventDefault();
+    return true;
   }
 
   function findingsForNode(id) {
@@ -2210,6 +2338,8 @@
     $("z-fit").addEventListener("click", () => network && network.fit({ animation: { duration: 400 } }));
     $("t-labels").addEventListener("click", () => { S.labels = !S.labels; store.set("labels", S.labels); $("t-labels").classList.toggle("on", S.labels); network && network.redraw(); });
     $("t-physics").addEventListener("click", () => setPhysics(!S.physics));
+    $("t-keys").addEventListener("click", () => $("key-help").classList.toggle("hidden"));
+    $("key-help-close").addEventListener("click", () => $("key-help").classList.add("hidden"));
 
     const file = $("file");
     for (const id of ["btn-upload", "empty-upload"]) $(id).addEventListener("click", () => file.click());
@@ -2291,8 +2421,13 @@
 
     document.addEventListener("keydown", (e) => {
       if (e.target.matches("input, textarea, select")) return;
+      if (onNavKey(e)) return;
       if (e.key === "/") { e.preventDefault(); $("q").focus(); }
-      else if (e.key === "Escape") { if (document.querySelector(".menu")) closeMenus(); else clearSelection(); }
+      else if (e.key === "Escape") {
+        if (document.querySelector(".menu")) closeMenus();
+        else if (!$("key-help").classList.contains("hidden")) $("key-help").classList.add("hidden");
+        else clearSelection();
+      }
       else if (e.key === "f" && network) network.fit({ animation: { duration: 400 } });
     });
     // host / user / agent filters

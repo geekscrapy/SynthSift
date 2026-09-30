@@ -110,6 +110,21 @@
         <button class="icon-btn" id="z-fit" title="Fit to screen"><span class="msi">fit_screen</span></button>
         <button class="icon-btn" id="t-labels" title="Toggle labels"><span class="msi">label</span></button>
         <button class="icon-btn" id="t-physics" title="Physics on/off"><span class="msi">play_arrow</span></button>
+        <button class="icon-btn" id="t-keys" title="Keyboard shortcuts (?)"><span class="msi">keyboard</span></button>
+      </div>
+      <div class="key-help hidden" id="key-help" role="dialog" aria-label="Keyboard shortcuts">
+        <div class="kh-head"><b>Keyboard</b><button class="icon-btn sm" id="key-help-close" title="Close"><span class="msi sm">close</span></button></div>
+        <dl>
+          <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next turn in the conversation</dd>
+          <dt><kbd>Shift</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next turn of the same kind</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>←</kbd> <kbd>→</kbd>, <kbd>Home</kbd> <kbd>End</kbd></dt><dd>Start / end of the conversation</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>↑</kbd></dt><dd>The thought behind this turn; again to go back</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>↓</kbd></dt><dd>Select it and everything linked to it (drag one to move them all); again for just it</dd>
+          <dt><kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Cycle clockwise through its links, back round to it</dd>
+          <dt><kbd>Alt</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous / next conversation</dd>
+          <dt><kbd>Esc</kbd> <kbd>F</kbd> <kbd>/</kbd> <kbd>?</kbd></dt><dd>Clear the selection, fit, search, this card</dd>
+        </dl>
+        <p class="kh-note">On a Mac, <kbd>⌥</kbd> <kbd>⇧</kbd> works in place of <kbd>Ctrl</kbd>: macOS keeps Ctrl + arrows for Spaces.</p>
       </div>
       <div class="empty hidden" id="empty">
         <div class="inner">
