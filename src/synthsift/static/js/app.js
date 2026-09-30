@@ -625,7 +625,7 @@
     let style;
     switch (e.type) {
       case "flow":
-        style = { width: 2.2, color: col(s.color_flow_by_conversation !== false && conv ? conv.color : GC.inkVariant, 0.85) };
+        style = { width: 3, color: col(s.color_flow_by_conversation !== false && conv ? conv.color : GC.inkVariant, 0.85) };
         break;
       case "thinks":
       case "leads_to":
@@ -751,10 +751,12 @@
     network.on("oncontext", (p) => {
       const id = network.getNodeAt(p.pointer.DOM);
       if (p.event && p.event.preventDefault) p.event.preventDefault();
-      if (!id || !S.nodes.has(id)) return; // not clusters: their selection card has the actions
+      if (!id) return;
       const r = $("graph").getBoundingClientRect();
+      const x = r.left + p.pointer.DOM.x, y = r.top + p.pointer.DOM.y;
       hideTip();
-      M.itemMenu(id, r.left + p.pointer.DOM.x, r.top + p.pointer.DOM.y, { target: targetOf(id), onFilter: filterOn, onSessions: showSessions });
+      if (network.isCluster(id)) clusterMenu(id, x, y);
+      else if (S.nodes.has(id)) M.itemMenu(id, x, y, { target: targetOf(id), onFilter: filterOn, onSessions: showSessions });
     });
     network.on("doubleClick", (p) => {
       if (!p.nodes.length) return;
@@ -1262,6 +1264,18 @@
       S.neighbors = null;
       renderSelection();
     }
+  }
+  function clusterMenu(cid, x, y) {
+    const c = S.clusters.get(cid);
+    if (!c) return;
+    M.itemMenu(cid, x, y, {
+      head: [`${c.mode[0].toUpperCase() + c.mode.slice(1)} cluster · ${plural(c.count, "node")}`, c.label], convs: c.convs,
+      actions: [
+        { icon: "zoom_in", label: "Dive in", title: "Filter the workspace to this cluster (or double-click it)", run: () => focusCluster(cid) },
+        { icon: "open_in_full", label: "Expand in place", title: "Show its nodes here, without filtering", run: () => expandCluster(cid) },
+      ],
+      onFilter: filterOn, onSessions: showSessions,
+    });
   }
   function expandCluster(cid) {
     clearSelection();

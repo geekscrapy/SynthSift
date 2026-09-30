@@ -549,18 +549,23 @@ const SS = (() => {
     }
 
     /* right-click menu */
+    /** [first, last] turn time over some conversations */
+    function spanOfConvs(cids) {
+      const want = new Set(cids);
+      let lo = null, hi = null;
+      for (const ev of G.events.values()) {
+        if (!want.has(ev.c) || !ev.ts) continue;
+        if (!lo || ev.ts < lo) lo = ev.ts;
+        if (!hi || ev.ts > hi) hi = ev.ts;
+      }
+      return [lo, hi];
+    }
     /** the conversations and time span [first, last] of a node id or tag target */
     function scopeOf(ref) {
       const id = ref.replace(/^(term|event):/, "");
       if (id.startsWith("conv:")) {
         const cid = id.slice(5);
-        let lo = null, hi = null;
-        for (const ev of G.events.values()) {
-          if (ev.c !== cid || !ev.ts) continue;
-          if (!lo || ev.ts < lo) lo = ev.ts;
-          if (!hi || ev.ts > hi) hi = ev.ts;
-        }
-        return { convs: G.convs.has(cid) ? [cid] : [], span: [lo, hi] };
+        return { convs: G.convs.has(cid) ? [cid] : [], span: spanOfConvs([cid]) };
       }
       const n = G.nodes.get(id);
       const ev = G.events.get(n && n.event ? n.event : id);
@@ -577,22 +582,22 @@ const SS = (() => {
     const FILTER_ROWS = [["host", "computer", "Host"], ["user", "person", "User"], ["harness", "terminal", "Agent"], ["conv", "forum", "Session"]];
     const dayStart = (ts, add = 0) => { const d = new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + add).toISOString(); };
     const shortDay = (ts) => new Date(ts).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
-    /** right-click menu for a node or table row (`ref`: node id or tag target): "Filter on" its host, user, agent,
-     *  session or days (for a term also "Show all sessions containing it"), then tag checkboxes, "New tag…" and a
-     *  comment. `target` is null for things that cannot be tagged (tool hubs); `onFilter(patch, what)` narrows the
-     *  shared scope, `onSessions(convIds, what)` shows only those sessions. */
-    function itemMenu(ref, x, y, { target = null, onFilter, onSessions }) {
+    /** right-click menu for a node, cluster or table row (`ref`: node id or tag target): `actions` first, then
+     *  "Filter on" its host, user, agent, session or days (for a term also "Show all sessions containing it"), then
+     *  tag checkboxes, "New tag…" and a comment. `target` is null for things that cannot be tagged (tool hubs,
+     *  clusters); `head` [kind, label] and `convs` stand in for a ref that is not a node (a cluster).
+     *  `onFilter(patch, what)` narrows the shared scope, `onSessions(convIds, what)` shows only those sessions. */
+    function itemMenu(ref, x, y, { target = null, onFilter, onSessions, head = null, convs: groupConvs = null, actions = [] }) {
       closeMenus();
       const n = G.nodes.get(ref);
-      const label = n ? n.label : target ? labelFor(target) : ref;
-      const what = n ? kindOf(n).label : MENU_KIND[ref.split(":", 1)[0]] || "Item";
+      const [what, label] = head || [n ? kindOf(n).label : MENU_KIND[ref.split(":", 1)[0]] || "Item", n ? n.label : target ? labelFor(target) : ref];
       const menu = el("div", { class: "menu tag-menu", role: "menu" });
       const filterItem = (ic, key, text, patch, on) => el("button", {
         class: "im-filter", role: "menuitem", disabled: on, title: on ? "Already filtered on this" : `Show only ${key.toLowerCase()} ${text}`,
         onclick: () => { menu.remove(); onFilter(patch, `${key.toLowerCase()} “${text}”`); },
       }, icon(on ? "check" : ic), el("span", { class: "im-key" }, key), el("span", { class: "grow im-val" }, text));
       // filters: the item's conversations in the current scope (all of them if none is)
-      const { convs, span } = scopeOf(ref);
+      const { convs, span } = groupConvs ? { convs: groupConvs, span: spanOfConvs(groupConvs) } : scopeOf(ref);
       const cs = convs.map((id) => G.convs.get(id)).filter(Boolean);
       const inScope = cs.filter((c) => convVisible(c.id));
       const filters = [];
@@ -621,10 +626,11 @@ const SS = (() => {
         filters.push(filterItem("schedule", "Time", text, patch, G.filter.from === patch.from && G.filter.to === patch.to));
       }
       const render = () => {
-        const parts = [el("div", { class: "tm-head" }, what, el("b", { title: label }, label))];
+        const parts = [el("div", { class: "tm-head" }, what, el("b", { title: label }, label)),
+          ...actions.map((a) => el("button", { role: "menuitem", title: a.title, onclick: () => { menu.remove(); a.run(); } }, icon(a.icon), el("span", { class: "grow" }, a.label)))];
         if (filters.length) parts.push(el("div", { class: "tm-sub" }, "Filter on"), ...filters);
         if (!target) {
-          parts.push(el("div", { class: "im-note" }, "Tool hubs can't be tagged – tag the individual calls instead."));
+          if (n && n.type === "tool_hub") parts.push(el("div", { class: "im-note" }, "Tool hubs can't be tagged – tag the individual calls instead."));
           return menu.replaceChildren(...parts);
         }
         const cur = new Set(tagsFor(target));
