@@ -351,7 +351,7 @@ The corpus at a glance, for the scope and time window you have set.
 
 | Where | What it does |
 |---|---|
-| **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click zooms. |
+| **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click a node to zoom to it; double-click a conversation's thread (the line from turn to turn) to clear the selection and show only that conversation. |
 | **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
 | **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
 | **Conversation chips** | Under the conversation picker: host, user, agent, model, file, plus the channel, session key, working directory, git branch, sub-agent and deleted/reset state when the agent recorded them. Click one to filter: host, user and agent narrow the scope, the file shows only this session, and the model or any other chip shows every session with the same value (*Undo* in the snackbar). |

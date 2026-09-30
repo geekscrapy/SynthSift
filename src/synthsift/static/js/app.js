@@ -760,7 +760,12 @@
       else if (S.nodes.has(id)) M.itemMenu(id, x, y, { target: targetOf(id), onFilter: filterOn, onSessions: showSessions });
     });
     network.on("doubleClick", (p) => {
-      if (!p.nodes.length) return;
+      if (!p.nodes.length) {
+        // a conversation's thread (turn to turn, call to result): clear the selection and show only that conversation
+        const e = p.edges.map((id) => S.edgeById.get(id)).find((x) => x && THREAD_EDGES.has(x.type) && x.conv);
+        if (e) filterToConversation(e.conv);
+        return;
+      }
       if (network.isCluster(p.nodes[0])) { focusCluster(p.nodes[0]); return; }
       network.focus(p.nodes[0], { scale: Math.max(1.2, network.getScale()), animation: { duration: 500 } });
     });
@@ -1201,7 +1206,7 @@
     const verb = e.label ? `— ${e.label} →` : `— ${e.type.replace("_", " ")} →`;
     const tip = $("tooltip");
     tip.replaceChildren(el("div", { class: "tt-sub" }, `${a ? a.label : e.from}  ${verb}  ${b ? b.label : e.to}`),
-      el("div", { class: "tt-foot" }, `${e.type}${e.w ? ` · ${e.w}×` : ""}`));
+      el("div", { class: "tt-foot" }, `${e.type}${e.w ? ` · ${e.w}×` : ""}${THREAD_EDGES.has(e.type) ? " · double-click to show only this conversation" : ""}`));
     placeTip();
   }
 
@@ -1997,6 +2002,14 @@
     S.hiddenConvs = new Set(S.convOrder.filter((c) => !keep.has(c)));
     setConvFilter(SS.narrowScope(S.filter, { host: "" }));
     snack(`Showing ${plural(keep.size, "session")} ${what}`, { label: "Undo", run: () => { S.hiddenConvs = prev.hidden; setConvFilter(prev.filter); } }, 6000);
+  }
+  const THREAD_EDGES = new Set(["flow", "returns"]);
+  function filterToConversation(cid) {
+    const c = S.convs.get(cid);
+    if (!c) return;
+    clearSelection();
+    S.currentConv = cid;
+    filterOn({ host: c.host, user: c.user, harness: c.harness, conv: cid }, `session “${c.title}”`);
   }
   function setConvFilter(f) {
     S.filter = f;
