@@ -471,14 +471,24 @@ const WS = (() => {
     }
     const nbs = (W.neighbours.get(id) || []).filter((x) => { const m = W.nodes.get(x.id); return m && nodeVisible(m); });
     if (nbs.length) {
-      const seen = new Set();
-      const uniq = nbs.filter((x) => (seen.has(x.id) ? false : seen.add(x.id)));
-      body.append(el("h4", {}, icon("hub", "xs"), "Linked nodes", el("span", { class: "count" }, fmt(uniq.length))),
-        el("div", { class: "nb-list" }, uniq.slice(0, 40).map((x) => {
-          const m = W.nodes.get(x.id);
-          return el("button", { class: "chip sm", style: { "--c": kindOf(m).color }, title: `${x.type}${x.label ? " · " + x.label : ""}`,
-            onclick: () => onSelect && onSelect(x.id) }, el("span", { class: "swatch" }), el("span", { class: "label" }, m.label));
-        })));
+      // One button per label: the same command run on every turn is a separate arg node with an identical
+      // label, so look-alikes collapse into the first, with a count.
+      const seen = new Set(), byLabel = new Map();
+      for (const x of nbs) {
+        if (seen.has(x.id)) continue;
+        seen.add(x.id);
+        const m = W.nodes.get(x.id);
+        const key = `${kindOf(m).key}\u0000${m.label}`;
+        if (byLabel.has(key)) byLabel.get(key).count++;
+        else byLabel.set(key, { id: x.id, m, count: 1 });
+      }
+      const groups = [...byLabel.values()];
+      body.append(el("h4", {}, icon("hub", "xs"), "Linked nodes", el("span", { class: "count" }, fmt(groups.length))),
+        el("div", { class: "nb-list" }, groups.slice(0, 40).map(({ id, m, count }) =>
+          el("button", { class: "chip sm", style: { "--c": kindOf(m).color },
+            title: `${m.type}${m.label ? " · " + m.label : ""}${count > 1 ? ` · ${count} linked` : ""}`,
+            onclick: () => onSelect && onSelect(id) }, el("span", { class: "swatch" }), el("span", { class: "label" }, m.label),
+            count > 1 ? el("span", { class: "count" }, `×${count}`) : null))));
     }
     const occ = occurrencesEl(n);
     if (occ.count) body.append(el("h4", {}, icon("format_quote", "xs"), n.type === "entity" ? "Occurrences" : "Text", el("span", { class: "count" }, fmt(occ.count))), occ.el);
