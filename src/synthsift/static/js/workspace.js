@@ -401,10 +401,13 @@ const WS = (() => {
   }
 
   /* ------------------------------------------------------ detail views */
-  function detailHead(icoName, color, title, chips, onClose) {
+  /** `copy`: text copied by a small superscript button right after the title */
+  function detailHead(icoName, color, title, chips, onClose, copy = null) {
+    const copyBtn = copy ? el("button", { class: "copy-sup", title: "Copy", "aria-label": "Copy",
+      onclick: () => { navigator.clipboard && navigator.clipboard.writeText(copy); snack("Copied"); } }, icon("content_copy")) : null;
     return el("div", { class: "detail-head" },
       el("span", { class: "ico", style: { background: color } }, icon(icoName)),
-      el("div", { class: "grow" }, el("div", { class: "title" }, title), el("div", { class: "sub" }, ...chips)),
+      el("div", { class: "grow" }, el("div", { class: "title" }, title, copyBtn), el("div", { class: "sub" }, ...chips)),
       onClose ? el("button", { class: "icon-btn sm", title: "Close", onclick: onClose }, icon("close", "sm")) : null);
   }
   const tag = (text) => el("span", { class: "tag" }, text);
@@ -460,8 +463,7 @@ const WS = (() => {
     if (fs.length) body.append(el("h4", {}, icon("shield", "xs"), "Findings", el("span", { class: "count" }, fmt(fs.length))), ...fs.slice(0, 20).map((f) => findingCard(f)));
     body.append(...annotationSection(target));
     body.append(el("div", { class: "detail-actions" },
-      el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id }) }, icon("hub"), "Show in graph"),
-      el("button", { class: "btn text sm", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(n.label); snack("Copied"); } }, icon("content_copy"), "Copy")));
+      el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id }) }, icon("hub"), "Show in graph")));
     if (convs.length) {
       body.append(el("h4", {}, icon("forum", "xs"), "Conversations", el("span", { class: "count" }, fmt(convs.length))),
         el("div", { class: "nb-list" }, convs.slice(0, 30).map((c) => el("button", {
@@ -492,7 +494,7 @@ const WS = (() => {
     }
     const occ = occurrencesEl(n);
     if (occ.count) body.append(el("h4", {}, icon("format_quote", "xs"), n.type === "entity" ? "Occurrences" : "Text", el("span", { class: "count" }, fmt(occ.count))), occ.el);
-    return el("div", {}, detailHead(k.icon, n.type === "conversation" && convs[0] ? convs[0].color : k.color, n.label, chips, onClose), body);
+    return el("div", {}, detailHead(k.icon, n.type === "conversation" && convs[0] ? convs[0].color : k.color, n.label, chips, onClose, n.label), body);
   }
 
   /** a turn with the turns around it */
