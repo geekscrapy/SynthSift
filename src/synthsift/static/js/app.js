@@ -71,6 +71,7 @@
   const WIN_ID = Math.random().toString(36).slice(2);
 
   let network = null;
+  let litLayer = null; // offscreen canvas for the edges a selection keeps lit
   let nodesDS = null;
   let edgesDS = null;
   let nodesView = null;
@@ -770,19 +771,26 @@
     network.on("dragStart", hideTip);
     network.on("zoom", hideTip);
     // A selection dims every edge that does not touch the selected node. It is done on the canvas rather than by
-    // restyling the edge DataSet (seconds with 100k edges): vis draws all edges faint, then the lit ones are drawn
-    // again underneath what is already there.
+    // restyling the edge DataSet (seconds with 100k edges): vis draws all edges faint, then the lit ones are drawn on
+    // a layer of their own, in the usual order (a label's text over its outline), and slid under what is there.
     network.on("beforeDrawing", (ctx) => { if (S.litEdges) ctx.globalAlpha = 0.08; });
     network.on("afterDrawing", (ctx) => {
       if (!S.litEdges) return;
       const { edges, edgeIndices } = network.body;
+      const layer = (litLayer ||= document.createElement("canvas"));
+      if (layer.width !== ctx.canvas.width || layer.height !== ctx.canvas.height) { layer.width = ctx.canvas.width; layer.height = ctx.canvas.height; }
+      const lc = layer.getContext("2d");
+      lc.setTransform(1, 0, 0, 1, 0, 0);
+      lc.clearRect(0, 0, layer.width, layer.height);
+      lc.setTransform(ctx.getTransform());
+      const lit = edgeIndices.filter((id) => S.litEdges.has(id) && edges[id].connected);
+      for (const id of lit) edges[id].draw(lc);
+      for (const id of lit) edges[id].drawArrows(lc);
       ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "destination-over";
-      for (const id of edgeIndices) {
-        const e = edges[id];
-        if (S.litEdges.has(id) && e.connected) { e.drawArrows(ctx); e.draw(ctx); }
-      }
+      ctx.drawImage(layer, 0, 0);
       ctx.restore();
     });
     if (S.layout === "layers") applyLayout(true);
