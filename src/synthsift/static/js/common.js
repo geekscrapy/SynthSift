@@ -96,11 +96,16 @@ const SS = (() => {
     ["folder", (m) => m.cwd, "Working directory"],
     ["fork_right", (m) => m.git_branch, "Git branch"],
   ];
-  function metaChips(meta) {
+  /** the chips; with `onPick(get, value)` they are buttons (e.g. to show every session with the same value) */
+  function metaChips(meta, onPick = null) {
     const out = [];
     for (const [ic, get, title, cls] of META_CHIPS) {
       const v = meta && get(meta);
-      if (v) out.push(el("span", { class: `tag${cls ? " " + cls : ""}`, title: `${title}: ${v}` }, icon(ic, "xs"), String(v)));
+      if (!v) continue;
+      const c = `tag${cls ? " " + cls : ""}`;
+      out.push(onPick
+        ? el("button", { class: c + " pill-btn", title: `${title}: ${v}\nClick to show every session with the same`, onclick: () => onPick(get, v) }, icon(ic, "xs"), String(v))
+        : el("span", { class: c, title: `${title}: ${v}` }, icon(ic, "xs"), String(v)));
     }
     return out;
   }
@@ -606,7 +611,7 @@ const SS = (() => {
         const sessions = termSessions(term);
         filters.unshift(el("button", {
           class: "im-filter", role: "menuitem", title: `Show only the sessions that mention “${term.label}”, on any host, user or agent`,
-          onclick: () => { menu.remove(); onSessions(sessions, `“${term.label}”`); },
+          onclick: () => { menu.remove(); onSessions(sessions, `containing “${term.label}”`); },
         }, icon("travel_explore"), el("span", { class: "grow" }, "Show all sessions containing it"), el("span", { class: "sub" }, fmt(sessions.length))));
       }
       const [lo, hi] = span;

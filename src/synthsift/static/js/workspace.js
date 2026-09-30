@@ -164,7 +164,7 @@ const WS = (() => {
     const keep = new Set(convIds);
     setHidden(W.convOrder.filter((c) => !keep.has(c)));
     setFilter({ host: "" });
-    snack(`Showing ${plural(keep.size, "session")} containing ${what}`, { label: "Undo", run: () => { setHidden(prev.hidden); setFilter(prev.filter); } }, 6000);
+    snack(`Showing ${plural(keep.size, "session")} ${what}`, { label: "Undo", run: () => { setHidden(prev.hidden); setFilter(prev.filter); } }, 6000);
   }
   /** "Tags & comment" of a detail pane, read-only */
   function annotationSection(target) {

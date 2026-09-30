@@ -1444,10 +1444,16 @@
     if (!c) { body.innerHTML = `<div class="panel-empty"><span class="msi">forum</span>No conversation selected</div>`; return; }
     const head = el("div", { class: "conv-picker" }, el("span", { class: "dot", style: { width: "12px", height: "12px", borderRadius: "50%", background: c.color, flex: "none" } }), convPicker(),
       el("button", { class: "icon-btn sm", title: "Show this conversation in the graph", onclick: () => fitConversation(cid) }, icon("center_focus_strong", "sm")));
+    // the pills filter: host / user / agent / this session, or every session with the same model or detail
+    const pill = (ic, text, title, onclick) => el("button", { class: "tag pill-btn", title, onclick }, icon(ic, "xs"), text);
+    const sessionsWith = (get, v) => S.convOrder.filter((id) => get(S.convs.get(id)) === v);
     const meta = el("div", { class: "conv-meta" },
-      el("span", { class: "tag" }, icon("computer", "xs"), c.host), el("span", { class: "tag" }, icon("person", "xs"), c.user),
-      el("span", { class: "tag" }, icon("terminal", "xs"), c.harness), c.model ? el("span", { class: "tag" }, icon("smart_toy", "xs"), c.model) : null,
-      el("span", { class: "tag", title: c.source }, icon("description", "xs"), c.session), ...SS.metaChips(c.meta));
+      pill("computer", c.host, "Show only this host", () => filterOn({ host: c.host }, `host “${c.host}”`)),
+      pill("person", c.user, "Show only this user", () => filterOn({ user: c.user }, `user “${c.user}”`)),
+      pill("terminal", c.harness, "Show only this agent", () => filterOn({ harness: c.harness }, `agent “${c.harness}”`)),
+      c.model ? pill("smart_toy", c.model, "Show every session using this model", () => showSessions(sessionsWith((o) => o.model, c.model), `using ${c.model}`)) : null,
+      pill("description", c.session, `${c.source}\nShow only this session`, () => filterOn({ host: c.host, user: c.user, harness: c.harness, conv: c.id }, `session “${c.title}”`)),
+      ...SS.metaChips(c.meta, (get, v) => showSessions(sessionsWith((o) => get(o.meta || {}), v), `with “${v}”`)));
     const collapse = S.settings.collapse_tool_results !== false;
     // long conversations render a window of events around the target
     const evs = S.data.events.filter((e) => e.c === cid);
@@ -1949,13 +1955,13 @@
     setConvFilter(SS.narrowScope(S.filter, patch));
     snack(`Showing only ${what}`, { label: "Undo", run: () => setConvFilter(prev) }, 6000);
   }
-  // right-click "Show all sessions containing": only those sessions, whatever the host / user / agent scope
+  // only these sessions, whatever the host / user / agent scope (right-click "Show all sessions containing", model pills)
   function showSessions(convIds, what) {
     const prev = { filter: S.filter, hidden: new Set(S.hiddenConvs) };
     const keep = new Set(convIds);
     S.hiddenConvs = new Set(S.convOrder.filter((c) => !keep.has(c)));
     setConvFilter(SS.narrowScope(S.filter, { host: "" }));
-    snack(`Showing ${plural(keep.size, "session")} containing ${what}`, { label: "Undo", run: () => { S.hiddenConvs = prev.hidden; setConvFilter(prev.filter); } }, 6000);
+    snack(`Showing ${plural(keep.size, "session")} ${what}`, { label: "Undo", run: () => { S.hiddenConvs = prev.hidden; setConvFilter(prev.filter); } }, 6000);
   }
   function setConvFilter(f) {
     S.filter = f;
