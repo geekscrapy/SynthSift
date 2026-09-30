@@ -218,15 +218,6 @@
         case "filters":
           S.hiddenConvs = new Set(m.hiddenConvs || []); S.filter = { ...SS.emptyScope(), ...(m.filter || S.filter) };
           renderFilters(); afterConvToggle(); break;
-        case "ping": // the Nodes / Timeline pages look for an open graph before opening a new one
-          if (!S.panelOnly) { applyingRemote = false; broadcast({ type: "pong" }); }
-          break;
-        case "reveal":
-          if (S.panelOnly) break;
-          applyingRemote = false;
-          reveal(m.id, m.para);
-          window.focus();
-          break;
         case "tagFilter": S.tagFilter = new Set(m.tags || []); afterTagFilter(); break;
       }
     } finally {

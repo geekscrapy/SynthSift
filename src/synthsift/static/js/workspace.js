@@ -222,26 +222,14 @@ const WS = (() => {
 
   /* ---------------------------------------------------------- navigation */
   // Show something in the graph: reuse an open graph tab if one answers, else open one.
+  /** open the graph in this tab with the item selected and focused; a turn, tool argument or session also narrows
+   *  the scope to its conversation (a term keeps the scope: it can span many). Back returns to this page. */
   function showInGraph({ id = null, para = null } = {}) {
-    let done = false;
-    const finish = (answered) => {
-      if (done) return;
-      done = true;
-      if (chan) chan.removeEventListener("message", onPong);
-      if (answered) {
-        broadcast({ type: "reveal", id, para });
-        snack("Shown in the graph tab");
-      } else {
-        const q = new URLSearchParams();
-        if (id) q.set("select", id);
-        if (para) q.set("para", para);
-        window.open("/?" + q.toString(), "synthsift-graph");
-      }
-    };
-    const onPong = (e) => { if (e.data && e.data.type === "pong") finish(true); };
-    if (chan) chan.addEventListener("message", onPong);
-    broadcast({ type: "ping" });
-    setTimeout(() => finish(false), chan ? 900 : 0); // a graph busy laying out can take a moment to answer
+    const n = id && W.nodes.get(id);
+    const ev = W.events.get(id) || (para && W.events.get((W.paras.get(para) || {}).e));
+    const cid = n && n.type !== "entity" && n.type !== "tool_hub" && n.conv && n.conv.length === 1 ? n.conv[0] : n ? null : ev && ev.c;
+    const c = cid && W.convs.get(cid);
+    location.href = SS.pageURL("/", { ...(c ? { host: c.host, user: c.user, harness: c.harness, conv: c.id } : {}), select: id, para });
   }
 
   /* ------------------------------------------------------------- sync */
