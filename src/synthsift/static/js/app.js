@@ -805,12 +805,21 @@
   function restyleEdges() {
     if (edgesDS) edgesDS.update(S.data.edges.map(edgeStyle));
   }
-  // What a selection keeps lit: the selected node's (or cluster's) edges as vis draws them, and the neighbours. When a
-  // neighbour (or the selected node) is inside a cluster, the cluster and the cluster edge stand in for it.
-  function lightSelection() {
+  // Which edges stay lit while nodes are faded (S.litEdges; null when nothing is). A selection keeps the selected
+  // node's (or cluster's) edges as vis draws them, and the neighbours; when a neighbour (or the selected node) is
+  // inside a cluster, the cluster and the cluster edge stand in for it. A search, tag filter or "Flagged" keeps the
+  // edges whose two ends are not faded (clusters are not faded by those).
+  function updateLit() {
     S.litClusters.clear();
     S.litEdges = null;
-    if (!S.neighbors || !network) return;
+    if (!network) return;
+    if (!S.neighbors) {
+      if (!(S.search && S.search.nodeIds.size) && !S.tagFilter.size && !S.flaggedOnly) return;
+      const lit = (id) => S.clusters.has(id) || !isDimmed(id);
+      const { edges, edgeIndices } = network.body;
+      S.litEdges = new Set(edgeIndices.filter((id) => lit(edges[id].fromId) && lit(edges[id].toId)));
+      return;
+    }
     let selEnd = S.selected || S.selectedCluster;
     for (const [cid, c] of S.clusters) {
       if (c.members.has(S.selected)) selEnd = cid;
@@ -992,7 +1001,7 @@
     $("cluster-mode").closest(".mini-select").classList.toggle("active", mode !== "off");
     if (mode === "off") {
       refreshClusterSelection();
-      lightSelection();
+      updateLit();
       // clusters were just opened (e.g. a cluster was clicked): lay their members out
       if (settle && S.justUnclustered) settleLayout();
       S.justUnclustered = false;
@@ -1035,7 +1044,7 @@
       });
     }
     refreshClusterSelection();
-    lightSelection();
+    updateLit();
     if (settle && (S.clusters.size || S.justUnclustered)) settleLayout();
     S.justUnclustered = false;
   }
@@ -1232,7 +1241,7 @@
       network.selectNodes([id]);
       if (focus) network.focus(id, { scale: Math.max(network.getScale(), 0.9), animation: { duration: 450 } });
     }
-    lightSelection();
+    updateLit();
     network && network.redraw();
     renderSelection();
     const occ = visibleOcc(n);
@@ -1255,7 +1264,7 @@
     S.neighbors = new Set([cid, ...network.getConnectedNodes(cid)]);
     S.matchSource = S.search ? searchSource() : null;
     network.selectNodes([cid]);
-    lightSelection();
+    updateLit();
     network.redraw();
     renderSelection();
     renderPanel();
@@ -1288,7 +1297,7 @@
   function expandCluster(cid) {
     clearSelection();
     openClusterNode(cid);
-    lightSelection();
+    updateLit();
     settleLayout();
     renderStats(S.data && S.data.stats);
   }
@@ -1300,7 +1309,7 @@
     if (S.search) S.matchSource = searchSource();
     else S.matchSource = null;
     network && network.unselectAll();
-    lightSelection();
+    updateLit();
     network && network.redraw();
     renderSelection();
     renderPanel();
@@ -1651,6 +1660,7 @@
   function setFlaggedOnly(on) {
     S.flaggedOnly = on;
     $("t-flagged").classList.toggle("selected", on);
+    updateLit();
     network && network.redraw();
     if (S.tab === "security") renderPanel({ keepScroll: true });
   }
@@ -1803,6 +1813,7 @@
   }
   function afterTagFilter() {
     renderTagChips();
+    updateLit();
     network && network.redraw();
     broadcast({ type: "tagFilter", tags: [...S.tagFilter] });
   }
@@ -1815,6 +1826,7 @@
       S.search = null;
       $("q-result").textContent = "";
       if (!S.selected) S.matchSource = null;
+      updateLit();
       network && network.redraw();
       renderPanel();
       return;
@@ -1842,7 +1854,8 @@
     }
     S.search = { q, re, occ, byPara, nodeIds };
     $("q-result").textContent = `${plural(nodeIds.size, "node")} · ${plural(byPara.size, "paragraph")}`;
-    if (!S.selected || switchTab) { S.selected = S.selectedCluster = null; S.neighbors = null; renderSelection(); lightSelection(); S.matchSource = searchSource(); }
+    if (!S.selected || switchTab) { S.selected = S.selectedCluster = null; S.neighbors = null; renderSelection(); S.matchSource = searchSource(); }
+    updateLit();
     network && network.redraw();
     if (switchTab) setTab("matches"); else renderPanel();
   }
