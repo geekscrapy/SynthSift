@@ -315,7 +315,7 @@
     grid.tbody.replaceChildren();
     grid.lastDay = undefined;
     if (!P.rows.length) {
-      grid.tbody.append(el("tr", { class: "empty" }, el("td", { colspan: cols.length + 1 }, el("div", { class: "grid-empty" }, icon("timeline"),
+      grid.tbody.append(el("tr", { class: "no-rows" }, el("td", { colspan: cols.length + 1 }, el("div", { class: "grid-empty" }, icon("timeline"),
         filtersActive() ? "No turns match these filters. " : "No turns in scope.",
         filtersActive() ? el("button", { class: "btn text sm", onclick: resetFilters }, "Reset filters") : null))));
       return;
