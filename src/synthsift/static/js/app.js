@@ -3,7 +3,7 @@
 
 (() => {
   const { store, api, esc, el, icon, snack, debounce, fmt, plural, fmtTime, makeRegex, closeMenus, placeMenu } = SS;
-  const { SEV_ORDER, SEV_COLOR, sevRank, STRUCTURAL, LAYERS, kindKey } = SS;
+  const { SEV_ORDER, SEV_COLOR, sevRank, LAYERS, kindKey } = SS;
   const $ = (id) => document.getElementById(id);
 
   const S = {
@@ -2228,14 +2228,10 @@
       const allOn = items.every((i) => !S.hiddenKinds.has(i.key));
       frag.append(el("div", { class: "legend-group" },
         el("h4", {}, g, el("button", { onclick: () => { for (const i of items) allOn ? S.hiddenKinds.add(i.key) : S.hiddenKinds.delete(i.key); afterKindToggle(); } }, allOn ? "hide all" : "show all")),
-        el("div", { class: "chip-row" }, items.map((i) => el("button", {
-          class: `chip sm${S.hiddenKinds.has(i.key) ? " off" : ""}`, title: `${i.label} – click to toggle, shift-click to show only this`,
-          onclick: (ev) => {
-            if (ev.shiftKey) { for (const k of counts.keys()) S.hiddenKinds.add(k); S.hiddenKinds.delete(i.key); for (const s of STRUCTURAL) if (i.key !== s && !STRUCTURAL.has(i.key)) S.hiddenKinds.delete(s); }
-            else S.hiddenKinds.has(i.key) ? S.hiddenKinds.delete(i.key) : S.hiddenKinds.add(i.key);
-            afterKindToggle();
-          },
-        }, el("span", { class: "swatch", style: { background: i.color } }), el("span", { class: "label" }, i.label), el("span", { class: "count" }, fmt(i.n)))))));
+        el("div", { class: "chip-row" }, items.map((i) => SS.kindChip(i, S.hiddenKinds, [...counts.keys()], (isolated) => {
+          if (isolated) S.hiddenLayers.clear(); // a type shown alone must not sit on a hidden layer
+          afterKindToggle();
+        })))));
     }
     $("legend").replaceChildren(frag);
   }

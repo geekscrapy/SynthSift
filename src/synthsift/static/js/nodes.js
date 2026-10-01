@@ -262,14 +262,10 @@
       const allOn = items.every((i) => !P.hiddenKinds.has(i.key));
       return el("div", { class: "rail-group" },
         el("h4", {}, g, el("button", { onclick: () => { for (const i of items) allOn ? P.hiddenKinds.add(i.key) : P.hiddenKinds.delete(i.key); changed(); } }, allOn ? "hide all" : "show all")),
-        el("div", { class: "chip-row" }, items.map((i) => el("button", {
-          class: `chip sm${P.hiddenKinds.has(i.key) ? " off" : ""}`, title: `${i.label} – click to toggle, shift-click to show only this type`,
-          onclick: (ev) => {
-            if (ev.shiftKey) { for (const k of W.kinds.keys()) P.hiddenKinds.add(k); P.hiddenKinds.delete(i.key); }
-            else P.hiddenKinds.has(i.key) ? P.hiddenKinds.delete(i.key) : P.hiddenKinds.add(i.key);
-            changed();
-          },
-        }, el("span", { class: "swatch", style: { background: i.color } }), el("span", { class: "label" }, i.label), el("span", { class: "count" }, fmt(i.n))))));
+        el("div", { class: "chip-row" }, items.map((i) => SS.kindChip(i, P.hiddenKinds, [...W.kinds.keys()], (isolated) => {
+          if (isolated) P.hiddenLayers.clear(); // a type shown alone must not sit on a hidden layer
+          changed();
+        }))));
     }));
     $("reset").classList.toggle("hidden", !filtersActive());
   }

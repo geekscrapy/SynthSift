@@ -368,6 +368,17 @@ input[type="color"] { width: 40px; height: 32px; padding: 0; border: 1px solid v
 .legend-group h4 { display: flex; align-items: center; margin: 6px 0 4px; font-size: 12px; font-weight: 500; color: var(--on-surface-variant); }
 .legend-group h4 button { margin-left: auto; font-size: 11px; background: none; border: 0; color: var(--primary); cursor: pointer; padding: 2px 4px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+/* node-type chip with its "only" button, shown over the count on hover / keyboard focus */
+.kind-chip { position: relative; display: inline-flex; max-width: 100%; }
+.kind-chip .chip { max-width: 100%; }
+.kind-chip .only { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); height: 20px; padding: 0 6px;
+  border: 0; border-radius: 4px; font: inherit; font-size: 11px; font-weight: 500; line-height: 20px; cursor: pointer;
+  background: var(--primary); color: var(--on-primary); opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.kind-chip:hover .only, .kind-chip:focus-within .only { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  .kind-chip .only { position: static; transform: none; opacity: 1; pointer-events: auto; margin-left: 2px;
+    background: none; color: var(--primary); }
+}
 .drawer-foot { flex: none; padding: 6px 8px 0; font-size: 12px; color: var(--on-surface-variant); border-top: 1px solid var(--outline-variant); }
 .drawer-foot .stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
 .warn-list { margin: 6px 0 0; padding: 0; list-style: none; max-height: 120px; overflow: auto; }

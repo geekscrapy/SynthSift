@@ -96,6 +96,32 @@ const SS = (() => {
     ["folder", (m) => m.cwd, "Working directory"],
     ["fork_right", (m) => m.git_branch, "Git branch"],
   ];
+  /** a node-type chip of the graph legend / Nodes rail. Clicking it shows or hides the type; its "only" button
+   *  (or shift-click) shows just this type, and on a type already shown alone it shows them all again.
+   *  `item` {key, label, color, n}; `hidden` the page's set of hidden types; `keys` the types on offer;
+   *  `onChange(isolated)` re-renders (`isolated`: one type is now shown alone). */
+  function kindChip(item, hidden, keys, onChange) {
+    const alone = !hidden.has(item.key) && keys.every((k) => k === item.key || hidden.has(k));
+    const only = () => {
+      if (alone) for (const k of keys) hidden.delete(k);
+      else { for (const k of keys) hidden.add(k); hidden.delete(item.key); }
+      onChange(!alone);
+    };
+    return el("span", { class: "kind-chip" },
+      el("button", {
+        class: `chip sm${hidden.has(item.key) ? " off" : ""}`,
+        title: `${item.label} – click to show or hide, shift-click to show only this type`,
+        onclick: (ev) => {
+          if (ev.shiftKey) return only();
+          hidden.has(item.key) ? hidden.delete(item.key) : hidden.add(item.key);
+          onChange(false);
+        },
+      }, el("span", { class: "swatch", style: { background: item.color } }), el("span", { class: "label" }, item.label),
+      el("span", { class: "count" }, fmt(item.n))),
+      el("button", { class: "only", title: alone ? "Show every type again" : `Show only ${item.label}`, onclick: only },
+        alone ? "all" : "only"));
+  }
+
   /** the chips; with `onPick(get, value)` they are buttons (e.g. to show every session with the same value) */
   function metaChips(meta, onPick = null) {
     const out = [];
@@ -690,7 +716,7 @@ const SS = (() => {
   }
 
   return {
-    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips,
+    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips, kindChip,
     fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, narrowScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
     SEV_ORDER, SEV_COLOR, sevRank, worstSeverity, STRUCTURAL, KIND_GROUPS, LAYERS, ROLE_ICON, kindKey, loadKinds, model,
   };
