@@ -112,17 +112,11 @@
       }
       case "multiselect": {
         const set = new Set(v);
-        const row = el("div", { class: "chip-row" });
-        for (const o of f.options) {
-          const chip = el("button", { class: `chip sm${set.has(o) ? " selected" : ""}`, type: "button" }, set.has(o) ? icon("check", "xs") : null, o);
-          chip.addEventListener("click", () => {
-            const cur = new Set(current(f.key));
-            cur.has(o) ? cur.delete(o) : cur.add(o);
-            setValue(f, f.options.filter((x) => cur.has(x)));
-            rerenderRow(f);
-          });
-          row.append(chip);
-        }
+        const row = el("div", { class: "chip-row" }, f.options.map((o) => SS.onlyChip({
+          key: o, label: o, set, keys: f.options, mode: "list", attrs: { type: "button" },
+          onChange: () => { setValue(f, f.options.filter((x) => set.has(x))); rerenderRow(f); },
+          children: [set.has(o) ? icon("check", "xs") : null, o],
+        })));
         const all = el("button", { class: "btn text sm", type: "button", onclick: () => { setValue(f, [...f.options]); rerenderRow(f); } }, "All");
         const none = el("button", { class: "btn text sm", type: "button", onclick: () => { setValue(f, []); rerenderRow(f); } }, "None");
         return el("div", {}, row, el("div", { style: { marginTop: "6px" } }, all, none));

@@ -96,31 +96,48 @@ const SS = (() => {
     ["folder", (m) => m.cwd, "Working directory"],
     ["fork_right", (m) => m.git_branch, "Git branch"],
   ];
-  /** a node-type chip of the graph legend / Nodes rail. Clicking it shows or hides the type; its "only" button
-   *  (or shift-click) shows just this type, and on a type already shown alone it shows them all again.
-   *  `item` {key, label, color, n}; `hidden` the page's set of hidden types; `keys` the types on offer;
-   *  `onChange(isolated)` re-renders (`isolated`: one type is now shown alone). */
-  function kindChip(item, hidden, keys, onChange) {
-    const alone = !hidden.has(item.key) && keys.every((k) => k === item.key || hidden.has(k));
+  /** a filter chip with an "only" button – the one chip used by every multiple-choice filter. Clicking the chip turns
+   *  its option on or off; "only" (shown on hover / keyboard focus, always on touch screens) or a shift-click keeps
+   *  just this option, and on an option already kept alone it reads "all" and brings them all back.
+   *  `set` holds, by `mode`:
+   *    "hide" – the hidden options (all show when it is empty): node types, layers
+   *    "pick" – the picked options (no filter when it is empty): tags, finding categories, lists
+   *    "list" – the chosen options as they are (empty: none): a settings field
+   *  `keys`: every option (for "hide" and "list"). `onChange(isolated)` re-renders; `isolated` says this option is now
+   *  the only one. The chip's look: `children`, `cls`, `style`, `title`, `onCls` / `offCls` (its class when on / off)
+   *  `small` and other `attrs` (e.g. oncontextmenu). */
+  function onlyChip({ key, label, set, keys = [], mode = "pick", onChange, children, cls = "", style = null, title = "",
+                      onCls = mode === "hide" ? "" : " selected", offCls = mode === "hide" ? " off" : "", small = true, attrs = {} }) {
+    const on = mode === "hide" ? !set.has(key) : set.has(key);
+    const alone = mode === "hide" ? on && keys.every((k) => k === key || set.has(k))
+      : set.size === 1 && on && (mode === "pick" || keys.length > 1);
     const only = () => {
-      if (alone) for (const k of keys) hidden.delete(k);
-      else { for (const k of keys) hidden.add(k); hidden.delete(item.key); }
+      set.clear();
+      if (mode === "hide") { if (!alone) for (const k of keys) if (k !== key) set.add(k); }
+      else if (mode === "list" && alone) for (const k of keys) set.add(k);
+      else if (!alone) set.add(key);
       onChange(!alone);
     };
-    return el("span", { class: "kind-chip" },
+    // "only" shows over the count, so the rest of the chip stays clickable; a chip without a count gets an empty slot
+    const slot = children.some((c) => c && c.classList && c.classList.contains("count")) ? [] : [el("span", { class: "count only-slot" })];
+    return el("span", { class: "only-chip" },
       el("button", {
-        class: `chip sm${hidden.has(item.key) ? " off" : ""}`,
-        title: `${item.label} – click to show or hide, shift-click to show only this type`,
+        ...attrs, class: `chip${small ? " sm" : ""} ${cls}${on ? onCls : offCls}`, ...(style ? { style } : {}),
+        title: `${title || label}${title ? "" : on ? " – click to turn off" : " – click to turn on"}; shift-click for only this`,
         onclick: (ev) => {
           if (ev.shiftKey) return only();
-          hidden.has(item.key) ? hidden.delete(item.key) : hidden.add(item.key);
+          set.has(key) ? set.delete(key) : set.add(key);
           onChange(false);
         },
-      }, el("span", { class: "swatch", style: { background: item.color } }), el("span", { class: "label" }, item.label),
-      el("span", { class: "count" }, fmt(item.n))),
-      el("button", { class: "only", title: alone ? "Show every type again" : `Show only ${item.label}`, onclick: only },
-        alone ? "all" : "only"));
+      }, ...children, ...slot),
+      el("button", { class: "only", type: "button", title: alone ? "Bring them all back" : `Only ${label}`, onclick: only }, alone ? "all" : "only"));
   }
+  /** a node-type chip (graph legend, Nodes rail): swatch, name and count */
+  const kindChip = (item, hidden, keys, onChange) => onlyChip({
+    key: item.key, label: item.label, set: hidden, keys, mode: "hide", onChange,
+    children: [el("span", { class: "swatch", style: { background: item.color } }), el("span", { class: "label" }, item.label),
+      el("span", { class: "count" }, fmt(item.n))],
+  });
 
   /** the chips; with `onPick(get, value)` they are buttons (e.g. to show every session with the same value) */
   function metaChips(meta, onPick = null) {
@@ -776,7 +793,7 @@ const SS = (() => {
   }
 
   return {
-    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips, kindChip,
+    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips, onlyChip, kindChip,
     fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, narrowScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
     SEV_ORDER, SEV_COLOR, sevRank, worstSeverity, STRUCTURAL, KIND_GROUPS, LAYERS, ROLE_ICON, kindKey, loadKinds, model,
   };

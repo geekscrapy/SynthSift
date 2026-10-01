@@ -1889,10 +1889,10 @@
         class: `chip sm sev-${sv}${S.secMinSev === sv ? " selected" : ""}`, title: `Show ${sv} and above`,
         onclick: () => { S.secMinSev = sv; store.set("secMinSev", sv); renderPanel(); },
       }, el("span", { class: "sev-chip" }, sv), el("span", { class: "count" }, fmt(bySev.get(sv)))))),
-      el("div", { class: "chip-row" }, Object.entries(cats).filter(([k]) => catCounts.get(k)).map(([k, label]) => el("button", {
-        class: `chip sm${S.secCats.has(k) ? " selected" : ""}`,
-        onclick: () => { S.secCats.has(k) ? S.secCats.delete(k) : S.secCats.add(k); renderPanel(); },
-      }, label, el("span", { class: "count" }, fmt(catCounts.get(k)))))),
+      el("div", { class: "chip-row" }, Object.entries(cats).filter(([k]) => catCounts.get(k)).map(([k, label]) => SS.onlyChip({
+        key: k, label, set: S.secCats, title: `Only ${label.toLowerCase()} findings`, onChange: () => renderPanel(),
+        children: [label, el("span", { class: "count" }, fmt(catCounts.get(k)))],
+      }))),
       el("button", { class: `chip sm${S.flaggedOnly ? " selected" : ""}`, onclick: () => setFlaggedOnly(!S.flaggedOnly) },
         icon("shield", "xs"), "Fade unflagged in graph"));
     if (!shown.length) {
@@ -2058,18 +2058,21 @@
     const counts = new Map();
     for (const a of Object.values(S.annotations)) for (const t of a.tags) counts.set(t, (counts.get(t) || 0) + 1);
     $("tag-count").textContent = fmt(Object.keys(S.annotations).length);
-    const chips = S.tags.map((t) => el("button", {
-      class: `chip sm tagf${S.tagFilter.has(t.name) ? " selected" : ""}${counts.get(t.name) ? "" : " muted-chip"}`,
-      style: { "--tag": t.color }, title: `Show only items tagged “${t.name}” (graph fades the rest; the Nodes and Timeline pages filter)`,
-      onclick: () => { S.tagFilter.has(t.name) ? S.tagFilter.delete(t.name) : S.tagFilter.add(t.name); store.set("tagFilter", [...S.tagFilter]); afterTagFilter(); },
-      oncontextmenu: (e) => {
-        e.preventDefault();
-        if (["bad", "suspicious", "seen", "ignore"].includes(t.name)) return;
-        if (confirm(`Delete custom tag “${t.name}” and remove it everywhere?`)) {
-          api(`/api/tags?name=${encodeURIComponent(t.name)}`, { method: "DELETE" }).then(async () => { await loadAnnotations(); afterAnnotationChange(); broadcast({ type: "annotations" }); });
-        }
+    const chips = S.tags.map((t) => SS.onlyChip({
+      key: t.name, label: `“${t.name}”`, set: S.tagFilter, cls: `tagf${counts.get(t.name) ? "" : " muted-chip"}`, style: { "--tag": t.color },
+      title: `Show only items tagged “${t.name}” (graph fades the rest; the Nodes and Timeline pages filter)`,
+      onChange: () => { store.set("tagFilter", [...S.tagFilter]); afterTagFilter(); },
+      attrs: {
+        oncontextmenu: (e) => {
+          e.preventDefault();
+          if (["bad", "suspicious", "seen", "ignore"].includes(t.name)) return;
+          if (confirm(`Delete custom tag “${t.name}” and remove it everywhere?`)) {
+            api(`/api/tags?name=${encodeURIComponent(t.name)}`, { method: "DELETE" }).then(async () => { await loadAnnotations(); afterAnnotationChange(); broadcast({ type: "annotations" }); });
+          }
+        },
       },
-    }, el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(counts.get(t.name) || 0))));
+      children: [el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(counts.get(t.name) || 0))],
+    }));
     chips.push(el("button", {
       class: `chip sm${S.hideIgnored ? " selected" : ""}`, title: "Hide everything tagged “ignore” from the graph",
       onclick: () => { S.hideIgnored = !S.hideIgnored; store.set("hideIgnored", S.hideIgnored); applyFilters(); renderTagChips(); },
@@ -2367,10 +2370,15 @@
   function renderLayers() {
     const counts = new Map();
     for (const id of S.visibleNodes) { const l = S.nodes.get(id).layer; counts.set(l, (counts.get(l) || 0) + 1); }
-    $("layers").replaceChildren(...LAYERS.map((l) => el("button", {
-      class: `chip${S.hiddenLayers.has(l.key) ? "" : " selected"}`, title: `Show / hide the ${l.label.toLowerCase()} layer`,
-      onclick: () => { S.hiddenLayers.has(l.key) ? S.hiddenLayers.delete(l.key) : S.hiddenLayers.add(l.key); applyFilters(); renderLayers(); renderLegend(); },
-    }, icon(S.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "sm"), l.label, el("span", { class: "count" }, fmt(counts.get(l.key) || 0)))));
+    $("layers").replaceChildren(...LAYERS.map((l) => SS.onlyChip({
+      key: l.key, label: `the ${l.label.toLowerCase()} layer`, set: S.hiddenLayers, keys: LAYERS.map((x) => x.key), mode: "hide",
+      onCls: " selected", offCls: "", small: false, title: `Show / hide the ${l.label.toLowerCase()} layer`,
+      onChange: (isolated) => {
+        if (isolated) S.hiddenKinds.clear(); // a layer shown alone shows all of itself
+        applyFilters(); renderLayers(); renderLegend();
+      },
+      children: [icon(S.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "sm"), l.label, el("span", { class: "count" }, fmt(counts.get(l.key) || 0))],
+    })));
   }
 
   function renderStats(st) {

@@ -169,15 +169,16 @@ const WS = (() => {
       for (const a of Object.values(W.annotations)) for (const t of a.tags) m.set(t, (m.get(t) || 0) + 1);
       return m;
     })();
-    container.replaceChildren(...W.tags.map((t) => el("button", {
-      class: `chip sm tagf${W.tagFilter.has(t.name) ? " selected" : ""}${c.get(t.name) ? "" : " muted-chip"}`, style: { "--tag": t.color },
-      onclick: () => {
-        W.tagFilter.has(t.name) ? W.tagFilter.delete(t.name) : W.tagFilter.add(t.name);
+    container.replaceChildren(...W.tags.map((t) => SS.onlyChip({
+      key: t.name, label: `“${t.name}”`, set: W.tagFilter, cls: `tagf${c.get(t.name) ? "" : " muted-chip"}`, style: { "--tag": t.color },
+      title: `Show only items tagged “${t.name}”`,
+      onChange: () => {
         store.set("tagFilter", [...W.tagFilter]);
         broadcast({ type: "tagFilter", tags: [...W.tagFilter] });
         emit("tagFilter");
       },
-    }, el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(c.get(t.name) || 0)))),
+      children: [el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(c.get(t.name) || 0))],
+    })),
     el("button", {
       class: `chip sm${W.hideIgnored ? " selected" : ""}`, title: "Hide everything tagged “ignore”",
       onclick: () => { W.hideIgnored = !W.hideIgnored; store.set("hideIgnored", W.hideIgnored); emit("tagFilter"); },
@@ -298,10 +299,10 @@ const WS = (() => {
 
   /** security category chips with counts; `selected` is the page's set of category keys */
   function renderCatChips(container, counts, selected, onChange) {
-    container.replaceChildren(...secCategories().filter((c) => counts.get(c.key) || selected.has(c.key)).map((c) => el("button", {
-      class: `chip sm${selected.has(c.key) ? " selected" : ""}`, title: `Only ${c.label.toLowerCase()} findings`,
-      onclick: () => { selected.has(c.key) ? selected.delete(c.key) : selected.add(c.key); onChange(); },
-    }, el("span", { class: "label" }, c.label), el("span", { class: "count" }, fmt(counts.get(c.key) || 0)))));
+    container.replaceChildren(...secCategories().filter((c) => counts.get(c.key) || selected.has(c.key)).map((c) => SS.onlyChip({
+      key: c.key, label: c.label.toLowerCase(), set: selected, title: `Only ${c.label.toLowerCase()} findings`, onChange: () => onChange(),
+      children: [el("span", { class: "label" }, c.label), el("span", { class: "count" }, fmt(counts.get(c.key) || 0))],
+    })));
   }
 
   /** rows-per-page select, "a–b of n" and page buttons */

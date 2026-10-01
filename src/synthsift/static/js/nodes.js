@@ -273,14 +273,16 @@
     renderShared();
     const lists = [...new Set([...listCounts.keys(), ...P.lists])].sort();
     $("lists-sec").classList.toggle("hidden", !lists.length);
-    $("listf").replaceChildren(...lists.map((l) => el("button", {
-      class: `chip sm${P.lists.has(l) ? " selected" : ""}`, title: `Only terms on “${l}”`,
-      onclick: () => { P.lists.has(l) ? P.lists.delete(l) : P.lists.add(l); changed(); },
-    }, el("span", { class: "label" }, l), el("span", { class: "count" }, fmt(listCounts.get(l) || 0)))));
-    $("layers").replaceChildren(...SS.LAYERS.map((l) => el("button", {
-      class: `chip sm${P.hiddenLayers.has(l.key) ? " off" : " selected"}`, title: `Show / hide the ${l.label.toLowerCase()} layer`,
-      onclick: () => { P.hiddenLayers.has(l.key) ? P.hiddenLayers.delete(l.key) : P.hiddenLayers.add(l.key); changed(); },
-    }, icon(P.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "xs"), l.label, el("span", { class: "count" }, fmt(layerCounts.get(l.key) || 0)))));
+    $("listf").replaceChildren(...lists.map((l) => SS.onlyChip({
+      key: l, label: `“${l}”`, set: P.lists, title: `Only terms on “${l}”`, onChange: () => changed(),
+      children: [el("span", { class: "label" }, l), el("span", { class: "count" }, fmt(listCounts.get(l) || 0))],
+    })));
+    $("layers").replaceChildren(...SS.LAYERS.map((l) => SS.onlyChip({
+      key: l.key, label: `the ${l.label.toLowerCase()} layer`, set: P.hiddenLayers, keys: SS.LAYERS.map((x) => x.key), mode: "hide",
+      onCls: " selected", offCls: " off", title: `Show / hide the ${l.label.toLowerCase()} layer`,
+      onChange: (isolated) => { if (isolated) P.hiddenKinds.clear(); changed(); }, // a layer shown alone shows all of itself
+      children: [icon(P.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "xs"), l.label, el("span", { class: "count" }, fmt(layerCounts.get(l.key) || 0))],
+    })));
     const groups = new Map();
     for (const [key, n] of kindCounts) {
       const g = WS.kindGroup(key);
@@ -323,10 +325,12 @@
       for (const cid of W.convOrder) if (WS.convVisible(cid)) { const v = W.convs.get(cid)[sh.by]; vals.set(v, (vals.get(v) || 0) + 1); }
       for (const v of sh.values) if (!vals.has(v)) vals.set(v, 0);
     }
-    $("shared-vals").replaceChildren(...[...vals].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([v, n]) => el("button", {
-      class: `chip sm${sh.values.includes(v) ? " selected" : ""}`, title: `${plural(n, "session")} in scope`,
-      onclick: () => { sh.values = sh.values.includes(v) ? sh.values.filter((x) => x !== v) : [...sh.values, v]; changed(); },
-    }, el("span", { class: "label" }, v))));
+    const picked = new Set(sh.values);
+    $("shared-vals").replaceChildren(...[...vals].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([v, n]) => SS.onlyChip({
+      key: v, label: v, set: picked, title: `Seen on ${v} (${plural(n, "session")} in scope)`,
+      onChange: () => { sh.values = [...picked]; changed(); },
+      children: [el("span", { class: "label" }, v)],
+    })));
     $("shared-hint").textContent = !sh.by ? "Find the nodes seen on more than one host, user, agent or session."
       : sh.values.length ? `Nodes seen in every one of the ${plural(sh.values.length, dim[2])} picked.`
         : sh.by === "conv" ? "Tip: check two sessions in the table (Ctrl / ⌘-click) and press S for what exactly they share."

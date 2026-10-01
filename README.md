@@ -414,7 +414,8 @@ The corpus at a glance, for the scope and time window you have set.
 | **Clustering** | *Cluster* in the graph toolbar (Force layout only, so it is hidden in Layers) collapses the graph into one node per **conversation, host, user or agent**; *auto* picks the first level with 2–40 groups once more than ~400 nodes are visible. Terms seen in more than one group stay outside the clusters, so you see what links sessions, hosts or users. **Click a cluster** to light it and the terms it links to (click others to compare them); **double-click** dives in: the workspace filters to it (in *auto* the next level then clusters, giving a drill-down). The selection card and the cluster's right-click menu also have *Dive in* and *Expand in place*, and the menu can filter on the hosts, users, agents, sessions or days inside. Clusters show member count, highest finding severity and member tags. |
 | **Layers chips** | Show or hide the *Thoughts*, *Dialogue*, *Actions* and *Entities* layers. |
 | **Force / Layers** | *Force*: free physics. *Layers*: a swim-lane timeline with thoughts above the dialogue, tool calls and arguments below it, and entities at the bottom. Thoughts sit on their own band because they weren't acted on. |
-| **Node types** | Legend and filter: click a type to show or hide it. Its **only** button (on hover; or shift-click) shows just that type, also when its layer was hidden; on a type already shown alone it reads **all** and brings every type back. |
+| **Node types** | Legend and filter: click a type to show or hide it, or use its **only** button (see below). Showing a type alone also turns its layer back on. |
+| **Only** | Every chip filter works the same way, on every page: node types, layers, tags, finding categories, IOC / keyword lists, the *Shared across* hosts / users / agents, and the multiple-choice fields in Settings. Click a chip to turn it on or off. Its **only** button, over the count on hover (or a shift-click), keeps just that one; on a chip already kept alone it reads **all** and brings them all back. |
 | **Export** | Standalone **pyvis HTML** (works offline), **GraphML** (Gephi / yEd / Cytoscape) or a PNG of the current view. |
 | **Open in Nodes** | The selection card's table button opens the selected node in the Nodes page. |
 | **Settings** (⚙) | Knobs for extraction, text sources, custom vocabularies/patterns, graph content, edges, security analysis (including an analyst **watchlist** of your own patterns), physics, appearance, the transcript panel and every colour. Each setting shows whether changing it re-analyses the transcripts, rebuilds the graph, or applies instantly. |
@@ -469,8 +470,8 @@ extracted terms.
   - The top search matches names, and the text of turns (`/regex/` supported).
   - The side rail filters by host, user, agent, conversation and time window;
     tag chips and *Hide ignored*; tagged, untagged or commented; findings
-    severity and category; IOC / keyword lists; layers; node types (each with
-    an **only** button, as on the graph page); and a minimum mention count for
+    severity and category; IOC / keyword lists; layers; node types (every chip
+    has an **only** button, as on the graph page); and a minimum mention count for
     terms.
   - **Shared across** finds nodes seen on more than one host, user, agent or
     session: pick the dimension and a minimum (2 by default), or pick hosts,
