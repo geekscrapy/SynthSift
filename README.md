@@ -402,6 +402,7 @@ The corpus at a glance, for the scope and time window you have set.
 | Where | What it does |
 |---|---|
 | **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click a node to zoom to it; double-click a conversation's thread (the line from turn to turn) to clear the selection and show only that conversation. |
+| **Selecting several** | <kbd>Ctrl</kbd> / <kbd>⌘</kbd>-click adds a node (or cluster) to the selection or takes it out. <kbd>Shift</kbd>-click selects everything from the last node picked to the one clicked: the turns between them when both are in one conversation, else the shortest path the graph draws. The selection card lists them and tags them all (*Tag*, or right-click one of them); the Matches tab lists their paragraphs. <kbd>S</kbd> (or *Shared*) then selects what they have in common: the terms two sessions both mention, the turns that mention two terms, the terms that link two host clusters, and so on. |
 | **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
 | **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
 | **Conversation chips** | Under the conversation picker: host, user, agent, model, file, plus the channel, session key, working directory, git branch, sub-agent and deleted/reset state when the agent recorded them. Click one to filter: host, user and agent narrow the scope, the file shows only this session, and the model or any other chip shows every session with the same value (*Undo* in the snackbar). |
@@ -445,8 +446,9 @@ Sessions, turns (messages, thoughts, tool calls and results) and terms
 - **Filter by tag**: click tag chips in the Tags panel. The graph fades
   everything else, and the Nodes and Timeline pages show only matching rows.
   *Hide ignored* removes `ignore`d items everywhere.
-- **Bulk tagging**: tick rows on the Nodes or Timeline page and use the tag bar,
-  or right-click the selection.
+- **Bulk tagging**: select several nodes in the graph (<kbd>Ctrl</kbd> / <kbd>⌘</kbd>-
+  or <kbd>Shift</kbd>-click), or rows on the Nodes or Timeline page, then
+  right-click one of them or use the tag bar.
 - **Storage**: tags and comments are saved in `annotations.json` in the data
   directory, shared by every open page and tab, and exported with each page's
   CSV.
@@ -460,7 +462,8 @@ Every node in one table: sessions, turns, tool calls and arguments, thoughts and
 extracted terms.
 
 - **Sort** by any column: name, type, findings (worst severity first), tags,
-  layer, mentions, links, conversations, host / user, first seen or last seen.
+  layer, mentions, links, conversations, hosts, users, host / user, first seen
+  or last seen.
   The *Columns* button hides or shows columns.
 - **Filter**
   - The top search matches names, and the text of turns (`/regex/` supported).
@@ -469,13 +472,21 @@ extracted terms.
     severity and category; IOC / keyword lists; layers; node types (each with
     an **only** button, as on the graph page); and a minimum mention count for
     terms.
+  - **Shared across** finds nodes seen on more than one host, user, agent or
+    session: pick the dimension and a minimum (2 by default), or pick hosts,
+    users or agents to keep the nodes seen on every one of them.
 - **Tag**
   - Right-click a row to tag it, comment on it, or filter every page to its
     host, user, agent, session or days.
-  - Check rows (shift-click for a range, or use the header box for the whole
-    page, then *Select all*) and use the bulk tag bar, or right-click the
-    selection. Its chips show whether all, some or none of the rows carry
-    each tag.
+  - Select rows: <kbd>Ctrl</kbd> / <kbd>⌘</kbd>-click one, <kbd>Shift</kbd>-click
+    for every row from the last one clicked (across pages too),
+    <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> to extend, or the checkboxes
+    (the header box takes the whole page, then *Select all*). Then use the bulk
+    tag bar or right-click the selection. Its chips show whether all, some or
+    none of the rows carry each tag.
+  - <kbd>S</kbd> with two or more rows selected shows and selects what they
+    have in common, e.g. the terms two sessions share; the toolbar chip
+    *Shared by …* goes back to every node.
   - Tags a turn inherits from its session are drawn outlined.
 - **Detail pane**: click a row to see its findings, tags and comment, linked
   nodes and every paragraph it appears in, with the word highlighted.
@@ -485,8 +496,9 @@ extracted terms.
   and timeline buttons, and a turn has a timeline button by its title. The
   timeline button selects the turn's row on the Timeline page.
 - **Keys**: <kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>j</kbd>/<kbd>k</kbd>) move
-  through the rows, <kbd>Space</kbd> checks one, <kbd>←</kbd>/<kbd>→</kbd>
-  page, <kbd>/</kbd> searches.
+  through the rows, <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> select as they
+  go, <kbd>Space</kbd> checks one, <kbd>S</kbd> selects what the selected rows
+  share, <kbd>←</kbd>/<kbd>→</kbd> page, <kbd>/</kbd> searches.
 - **CSV export** of the filtered rows.
 
 ![Nodes table with bulk tagging and the detail pane](docs/nodes.jpg)
@@ -505,8 +517,10 @@ system prompt, sits at the time of the next turn in its conversation (marked ≈
   a category). The top search covers every column at once. The side rail holds
   the shared scope, time window and tag filters, *With comments only*, and the
   order (the *Time* title flips it too).
-- **Tag** single rows or many at once, the same way as on the Nodes page, or
-  right-click a row to tag it or filter on its host, user, agent, session or day.
+- **Tag** single rows or many at once (<kbd>Ctrl</kbd> / <kbd>⌘</kbd>-click,
+  <kbd>Shift</kbd>-click or <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>), the same
+  way as on the Nodes page, or right-click a row to tag it or filter on its
+  host, user, agent, session or day.
 - **Detail pane**: the turn's findings with their `source → action → sink`
   chains, its tags and comment, and the turn in context, with adjustable
   **# before / # after**.

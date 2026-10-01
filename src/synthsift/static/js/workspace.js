@@ -133,17 +133,7 @@ const WS = (() => {
   }
 
   /* -------------------------------------------------------- annotations */
-  /** add or remove one tag on many targets at once */
-  async function bulkTag(targets, tag, on) {
-    for (const t of targets) {
-      const cur = new Set(tagsFor(t));
-      if (on === cur.has(tag)) continue;
-      on ? cur.add(tag) : cur.delete(tag);
-      try { await M.putAnnotation(t, [...cur]); } catch (e) { snack("Could not save: " + e.message); break; }
-    }
-    broadcast({ type: "annotations" });
-    emit("annotations");
-  }
+  const { bulkTag, coverage } = M;
   async function newTag() {
     const name = await M.newTag();
     if (name) { broadcast({ type: "annotations" }); emit("annotations"); }
@@ -362,12 +352,6 @@ const WS = (() => {
     } else checked.has(key) ? checked.delete(key) : checked.add(key);
   }
 
-  /** how many of the targets carry a tag: all, some ("mixed") or none */
-  function coverage(targets, name) {
-    const have = targets.filter((x) => tagsFor(x).includes(name)).length;
-    const all = targets.length && have === targets.length;
-    return { have, all, aria: all ? "true" : have ? "mixed" : "false", icon: all ? "check_box" : have ? "indeterminate_check_box" : "check_box_outline_blank" };
-  }
   /** toolbar for the checked rows: clear, select all rows (keys), and a tri-state chip per tag */
   function bulkBar({ checked, keys, canSelectAll, targets, redraw }) {
     const ts = targets();
@@ -387,22 +371,21 @@ const WS = (() => {
       el("button", { class: "chip sm", onclick: async () => { const n = await newTag(); if (n) bulkTag(targets(), n, true); } }, icon("add", "xs"), "New"));
   }
   /** right-click menu for the checked rows */
-  function bulkMenu(x, y, targets, { withNewTag = true } = {}) {
-    closeMenus();
-    const menu = el("div", { class: "menu tag-menu", role: "menu" });
-    const draw = () => {
-      const ts = targets();
-      menu.replaceChildren(el("div", { class: "tm-head" }, "Tag selection", el("b", {}, plural(ts.length, "item"))),
-        ...W.tags.map((t) => {
-          const s = coverage(ts, t.name);
-          return el("button", { role: "menuitemcheckbox", "aria-checked": s.aria, onclick: async () => { await bulkTag(ts, t.name, !s.all); draw(); } },
-            icon(s.icon), el("span", { class: "dot", style: { background: t.color } }),
-            el("span", { class: "grow" }, t.name), s.have && !s.all ? el("span", { class: "sub" }, `${s.have}/${ts.length}`) : null);
-        }),
-        ...(withNewTag ? [el("button", { onclick: async () => { const n = await newTag(); if (n) { await bulkTag(targets(), n, true); draw(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…"))] : []));
-    };
-    draw();
-    placeMenu(menu, x, y);
+  const bulkMenu = (x, y, targets, opts) => M.bulkMenu(x, y, targets, opts);
+  /** a row click with a modifier: Ctrl / ⌘ checks or unchecks the row, Shift checks every row from the anchor (the
+   *  last row clicked) to this one. `keys` are all the rows in order. False for a plain click. */
+  function selectClick(e, checked, keys, anchor, key) {
+    if (e.shiftKey && anchor && anchor !== key) {
+      const [a, b] = [keys.indexOf(anchor), keys.indexOf(key)].sort((x, y) => x - y);
+      if (a < 0) checked.add(key);
+      else for (const k of keys.slice(a, b + 1)) checked.add(k);
+      return true;
+    }
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      checked.has(key) ? checked.delete(key) : checked.add(key);
+      return true;
+    }
+    return false;
   }
 
   /* ------------------------------------------------------ detail views */
@@ -590,7 +573,7 @@ const WS = (() => {
     tagChipsHTML, itemMenu, annotationSection, renderTagFilter,
     findingsForNode, chainEl, endpointLabel: M.endpointLabel, showInGraph, showInTimeline,
     wireTopbar, scopeSection, tagsHeading, renderScope, scopeActive, resetScope, renderCatChips, pager, columnsMenu,
-    pageCheckbox, rowCheckbox, toggleCheck, bulkBar, bulkMenu,
+    pageCheckbox, rowCheckbox, toggleCheck, selectClick, bulkBar, bulkMenu, sharedNodes: M.sharedNodes,
     nodeDetail, turnDetail, convDetail,
   };
 })();

@@ -561,6 +561,66 @@ const SS = (() => {
       } catch (e) { snack(e.message); return null; }
     }
 
+    /* tagging many at once */
+    /** how many of the targets carry a tag: all, some ("mixed") or none */
+    function coverage(targets, name) {
+      const have = targets.filter((x) => tagsFor(x).includes(name)).length;
+      const all = targets.length && have === targets.length;
+      return { have, all, aria: all ? "true" : have ? "mixed" : "false", icon: all ? "check_box" : have ? "indeterminate_check_box" : "check_box_outline_blank" };
+    }
+    /** add or remove one tag on many targets */
+    async function bulkTag(targets, tag, on) {
+      for (const t of targets) {
+        const cur = new Set(tagsFor(t));
+        if (on === cur.has(tag)) continue;
+        on ? cur.add(tag) : cur.delete(tag);
+        try { await putAnnotation(t, [...cur]); } catch (e) { snack("Could not save: " + e.message); break; }
+      }
+      onSaved();
+    }
+    /** right-click menu for a multi-selection: a tri-state checkbox per tag (`targets()` is read again after each change) */
+    function bulkMenu(x, y, targets, { withNewTag = true } = {}) {
+      closeMenus();
+      const menu = el("div", { class: "menu tag-menu", role: "menu" });
+      const draw = () => {
+        const ts = targets();
+        menu.replaceChildren(el("div", { class: "tm-head" }, "Tag selection", el("b", {}, plural(ts.length, "item"))),
+          ...G.tags.map((t) => {
+            const s = coverage(ts, t.name);
+            return el("button", { role: "menuitemcheckbox", "aria-checked": s.aria, onclick: async () => { await bulkTag(ts, t.name, !s.all); draw(); } },
+              icon(s.icon), el("span", { class: "dot", style: { background: t.color } }),
+              el("span", { class: "grow" }, t.name), s.have && !s.all ? el("span", { class: "sub" }, `${s.have}/${ts.length}`) : null);
+          }),
+          ...(withNewTag ? [el("button", { onclick: async () => { const n = await promptTag(); if (n) { await bulkTag(targets(), n, true); draw(); } } },
+            icon("add"), el("span", { class: "grow" }, "New tag…"))] : []));
+      };
+      draw();
+      placeMenu(menu, x, y);
+    }
+
+    /* what nodes have in common */
+    /** the nodes every one of `ids` has in common: what appears in a session (for a conversation node), or what a
+     *  node links to (`neighboursOf(id)`, ids) – e.g. the terms two sessions share, the turns that mention two terms */
+    function sharedNodes(ids, neighboursOf) {
+      const members = (id) => {
+        const n = G.nodes.get(id);
+        if (n && n.type === "conversation") {
+          const cid = n.conv[0], out = new Set();
+          for (const m of G.nodes.values()) if ((m.conv || []).includes(cid)) out.add(m.id);
+          return out;
+        }
+        return new Set(neighboursOf(id));
+      };
+      let acc = null;
+      for (const id of ids) {
+        const m = members(id);
+        acc = acc ? new Set([...acc].filter((x) => m.has(x))) : m;
+        if (!acc.size) break;
+      }
+      for (const id of ids) acc && acc.delete(id);
+      return acc ? [...acc] : [];
+    }
+
     /* tag views */
     /** tag chips as HTML; `inherited` ones (a set) are drawn outlined */
     const tagChipsHTML = (tags, inherited = null) => tags.map((t) => (inherited && inherited.has(t)
@@ -710,7 +770,7 @@ const SS = (() => {
     return {
       kind, kindOf, kindGroup, avatarHTML, convMatchesFilter, convVisible, windowOn, inWindow, eventVisible, paraVisible, nodeInWindow,
       targetOf, annOf, tagsFor, tagInfo, nodeTags, seenRange, labelFor, convFor, tsFor,
-      loadAnnotations, putAnnotation, toggleTag, newTag, tagChipsHTML, annotationView, itemMenu,
+      loadAnnotations, putAnnotation, toggleTag, newTag, coverage, bulkTag, bulkMenu, sharedNodes, tagChipsHTML, annotationView, itemMenu,
       endpointLabel, chainEl, findingWhere, findingCard,
     };
   }

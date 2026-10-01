@@ -6,6 +6,9 @@
  * URL parameters (the dashboard's links): the shared scope (from, to, host, …) and
  * kinds=<node types / categories to show>, lists=<list labels or *>, cats=<finding categories>,
  * sev=<minimum severity>, q=<search>, select=<node id>.
+ *
+ * Rows are selected with their checkbox, Ctrl / ⌘-click (one row) or Shift-click (a range); S selects what the
+ * selected nodes have in common. "Shared across" finds nodes seen on several hosts, users, agents or sessions.
  */
 "use strict";
 
@@ -27,6 +30,9 @@
     lists: new Set(store.get("nodes.lists", [])), // IOC / keyword list labels
     minMentions: store.get("nodes.minMentions", 0),
     hiddenCols: new Set(store.get("nodes.hiddenCols", ["layer"])),
+    // "Shared across": nodes seen in at least `min` distinct hosts / users / agents / sessions, or in every one of `values`
+    shared: { by: "", min: 2, values: [], ...store.get("nodes.shared", {}) },
+    sharedBy: null, // { ids, nodes }: the nodes the checked ones have in common (the S key)
     checked: new Set(),
     anchor: null, // last row clicked, for shift-click ranges
     detail: null, // { kind: "node" | "conv" | "turn", id }
@@ -36,7 +42,10 @@
     for (const k of ["q", "pageSize", "tagMode", "minSev", "minMentions"]) store.set("nodes." + k, P[k]);
     for (const k of ["hiddenKinds", "hiddenLayers", "secCats", "lists", "hiddenCols"]) store.set("nodes." + k, [...P[k]]);
     store.set("nodes.sort", P.sort);
+    store.set("nodes.shared", P.shared);
   };
+  const SHARED_DIMS = [["host", "Hosts", "host"], ["user", "Users", "user"], ["harness", "Agents", "agent"], ["conv", "Sessions", "session"]];
+  const noShared = () => ({ by: "", min: 2, values: [] });
 
   const LAYER_LABEL = Object.fromEntries(SS.LAYERS.map((l) => [l.key, l.label]));
   const TAG_MODES = [["all", "All"], ["tagged", "Tagged"], ["untagged", "Untagged"], ["commented", "Commented"]];
@@ -76,6 +85,12 @@
     const hosts = new Set(cs.map((c) => c.host)), users = new Set(cs.map((c) => c.user));
     return hosts.size === 1 && users.size === 1 ? `${cs[0].host} / ${cs[0].user}` : `${plural(hosts.size, "host")} · ${plural(users.size, "user")}`;
   }
+  /** the distinct hosts / users / agents / sessions (in scope) a row's node appears in */
+  function dims(r, by) {
+    r.dims ||= {};
+    return (r.dims[by] ||= new Set(r.convs.map((c) => (by === "conv" ? c : W.convs.get(c)[by]))));
+  }
+  const dimCell = (r, by) => { const v = dims(r, by); return el("td", { class: "num", title: [...v].slice(0, 12).join("\n") }, fmt(v.size)); };
   const COLS = [
     { key: "label", label: "Node", fixed: true, get: (r) => r.n.label.toLowerCase(), cell: nodeCell },
     { key: "type", label: "Type", get: (r) => r.m.kind.label, cell: (r) => el("td", { class: "cell-muted" }, r.m.kind.label) },
@@ -100,6 +115,8 @@
       key: "convs", label: "Conversations", num: true, get: (r) => r.convs.length,
       cell: (r) => el("td", { class: "num", title: r.convs.slice(0, 12).map((c) => W.convs.get(c).title).join("\n") }, fmt(r.convs.length)),
     },
+    { key: "hosts", label: "Hosts", num: true, get: (r) => dims(r, "host").size, cell: (r) => dimCell(r, "host") },
+    { key: "users", label: "Users", num: true, get: (r) => dims(r, "user").size, cell: (r) => dimCell(r, "user") },
     { key: "where", label: "Host / user", get: whereOf, cell: (r) => el("td", { class: "cell-muted" }, whereOf(r) || "–") },
     { key: "first", label: "First seen", get: (r) => r.m.first || "", cell: (r) => el("td", { class: "cell-muted" }, SS.fmtTime(r.m.first) || "–") },
     { key: "last", label: "Last seen", get: (r) => r.m.last || "", desc: true, cell: (r) => el("td", { class: "cell-muted" }, SS.fmtTime(r.m.last) || "–") },
@@ -128,9 +145,11 @@
     const rows = [];
     let total = 0;
     const windowed = WS.windowOn();
+    const sh = P.shared, need = sh.by && sh.values.length ? sh.values : null;
     for (const n of W.nodes.values()) {
       if (!WS.nodeVisible(n)) continue;
       total++;
+      if (P.sharedBy && !P.sharedBy.nodes.has(n.id)) continue;
       let m = meta.get(n.id);
       // with a time window, entities count their mentions inside it
       if (windowed && n.type === "entity") m = { ...m, mentions: (n.occ || []).filter(([pid]) => WS.paraVisible(pid)).length };
@@ -149,10 +168,15 @@
       if (P.secCats.size && !(n.secc || []).some((c) => P.secCats.has(c))) continue;
       for (const l of n.labels || []) listCounts.set(l, (listCounts.get(l) || 0) + 1);
       if (P.lists.size && !(n.labels || []).some((l) => P.lists.has(l))) continue;
+      const row = { id: n.id, n, m, tags, ann, target, convs: (n.conv || []).filter(WS.convVisible) };
+      if (sh.by) {
+        const seen = dims(row, sh.by);
+        if (need ? !need.every((v) => seen.has(v)) : seen.size < sh.min) continue;
+      }
       kindCounts.set(m.kind.key, (kindCounts.get(m.kind.key) || 0) + 1);
       layerCounts.set(n.layer, (layerCounts.get(n.layer) || 0) + 1);
       if (P.hiddenLayers.has(n.layer) || P.hiddenKinds.has(m.kind.key)) continue;
-      rows.push({ id: n.id, n, m, tags, ann, target, convs: (n.conv || []).filter(WS.convVisible) });
+      rows.push(row);
     }
     const col = COLS.find((c) => c.key === P.sort.key) || COLS[3];
     const dir = P.sort.dir;
@@ -168,12 +192,13 @@
 
   function filtersActive() {
     return !!(P.q || P.hiddenKinds.size || P.hiddenLayers.size || P.tagMode !== "all" || P.minSev || P.secCats.size || P.lists.size || P.minMentions
-      || WS.scopeActive());
+      || P.shared.by || P.sharedBy || WS.scopeActive());
   }
   function resetPageFilters() {
     P.q = ""; $("q").value = "";
     P.hiddenKinds.clear(); P.hiddenLayers.clear(); P.tagMode = "all"; P.minSev = ""; P.secCats.clear(); P.lists.clear(); P.minMentions = 0;
-    $("min-mentions").value = 0; $("min-sev").value = "";
+    P.shared = noShared(); P.sharedBy = null;
+    $("min-mentions").value = 0; $("min-sev").value = ""; $("shared-min").value = 2;
     save();
   }
   function resetFilters() {
@@ -207,6 +232,8 @@
     sev.value = P.minSev;
     const mm = el("input", { class: "text-input", id: "min-mentions", type: "number", min: 0, step: 1, value: P.minMentions, style: { width: "84px" } });
     mm.addEventListener("input", debounce(() => { P.minMentions = Math.max(0, Number(mm.value) || 0); changed(); }, 200));
+    const sm = el("input", { class: "text-input", id: "shared-min", type: "number", min: 2, step: 1, value: P.shared.min, style: { width: "64px" } });
+    sm.addEventListener("input", debounce(() => { P.shared.min = Math.max(2, Number(sm.value) || 2); if (P.shared.by) changed(); else save(); }, 200));
     $("rail").replaceChildren(
       WS.scopeSection(resetFilters),
       el("div", { class: "rail-section" },
@@ -224,6 +251,14 @@
         el("h3", {}, icon("category", "xs"), "Node types", el("button", { onclick: () => { P.hiddenKinds.clear(); P.hiddenLayers.clear(); changed(); } }, "Show all")),
         el("div", { class: "chip-row", id: "layers" }), el("div", { id: "kinds", style: { marginTop: "6px" } })),
       el("div", { class: "rail-section" },
+        el("h3", {}, icon("join_inner", "xs"), "Shared across",
+          el("button", { id: "shared-clear", onclick: () => { P.shared = noShared(); changed(); } }, "Clear")),
+        el("div", { class: "segmented sm", id: "shared-by", role: "group", "aria-label": "Shared across" }),
+        el("label", { class: "field-row", id: "shared-min-row", style: { marginTop: "8px" } },
+          el("span", { class: "grow" }, "Seen in at least"), sm, el("span", { id: "shared-unit", class: "muted" })),
+        el("div", { class: "chip-row", id: "shared-vals", style: { marginTop: "6px" } }),
+        el("p", { class: "hint", id: "shared-hint" })),
+      el("div", { class: "rail-section" },
         el("h3", {}, icon("tag", "xs"), "Terms"),
         el("label", { class: "field-row" }, el("span", { class: "grow" }, "Minimum mentions"), mm)));
   }
@@ -235,6 +270,7 @@
       class: P.tagMode === k ? "on" : "", onclick: () => { P.tagMode = k; changed(); },
     }, label)));
     WS.renderCatChips($("cats"), catCounts, P.secCats, changed);
+    renderShared();
     const lists = [...new Set([...listCounts.keys(), ...P.lists])].sort();
     $("lists-sec").classList.toggle("hidden", !lists.length);
     $("listf").replaceChildren(...lists.map((l) => el("button", {
@@ -270,6 +306,56 @@
     $("reset").classList.toggle("hidden", !filtersActive());
   }
 
+  /** the "Shared across" section: a dimension, a minimum count, or values that must all be present */
+  function renderShared() {
+    const sh = P.shared;
+    $("shared-by").replaceChildren(...SHARED_DIMS.map(([key, label]) => el("button", {
+      class: sh.by === key ? "on" : "", title: sh.by === key ? "Stop filtering" : `Nodes seen in more than one ${label.slice(0, -1).toLowerCase()}`,
+      onclick: () => { P.shared = sh.by === key ? noShared() : { ...noShared(), min: sh.min, by: key }; changed(); },
+    }, label)));
+    $("shared-clear").classList.toggle("hidden", !sh.by);
+    const dim = SHARED_DIMS.find(([k]) => k === sh.by);
+    $("shared-min-row").classList.toggle("hidden", !sh.by || sh.values.length > 0);
+    $("shared-unit").textContent = dim ? dim[1].toLowerCase() : "";
+    // hosts, users and agents in scope can be picked: then a node must appear in every one picked
+    const vals = new Map();
+    if (sh.by && sh.by !== "conv") {
+      for (const cid of W.convOrder) if (WS.convVisible(cid)) { const v = W.convs.get(cid)[sh.by]; vals.set(v, (vals.get(v) || 0) + 1); }
+      for (const v of sh.values) if (!vals.has(v)) vals.set(v, 0);
+    }
+    $("shared-vals").replaceChildren(...[...vals].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([v, n]) => el("button", {
+      class: `chip sm${sh.values.includes(v) ? " selected" : ""}`, title: `${plural(n, "session")} in scope`,
+      onclick: () => { sh.values = sh.values.includes(v) ? sh.values.filter((x) => x !== v) : [...sh.values, v]; changed(); },
+    }, el("span", { class: "label" }, v))));
+    $("shared-hint").textContent = !sh.by ? "Find the nodes seen on more than one host, user, agent or session."
+      : sh.values.length ? `Nodes seen in every one of the ${plural(sh.values.length, dim[2])} picked.`
+        : sh.by === "conv" ? "Tip: check two sessions in the table (Ctrl / ⌘-click) and press S for what exactly they share."
+          : `Or pick ${dim[1].toLowerCase()}: nodes seen in every one picked.`;
+  }
+
+  /* ---------------------------------------------------------- shared by (S) */
+  /** S: show and select the nodes the checked ones have in common */
+  function selectShared() {
+    const ids = [...P.checked];
+    if (ids.length < 2) { snack("Select two or more nodes first (Ctrl / ⌘-click rows), then press S"); return; }
+    const nodes = new Set(WS.sharedNodes(ids, (id) => (W.neighbours.get(id) || []).map((x) => x.id))
+      .filter((id) => W.nodes.has(id) && WS.nodeVisible(W.nodes.get(id))));
+    if (!nodes.size) { snack(`The ${plural(ids.length, "selected node")} have nothing in common`); return; }
+    const prev = { checked: P.checked, sharedBy: P.sharedBy };
+    P.sharedBy = { ids, nodes };
+    P.page = 0;
+    render({ keepRail: true });
+    P.checked = new Set(P.rows.map((r) => r.id)); // what the filters let through
+    render({ keepRail: true });
+    snack(`${plural(nodes.size, "node")} shared by ${sharedLabel(ids)}`, {
+      label: "Undo", run: () => { P.checked = prev.checked; P.sharedBy = prev.sharedBy; render(); },
+    }, 6000);
+  }
+  function sharedLabel(ids) {
+    const names = ids.slice(0, 2).map((id) => `“${(W.nodes.get(id) || { label: id }).label}”`);
+    return names.join(" and ") + (ids.length > 2 ? ` and ${plural(ids.length - 2, "other")}` : "");
+  }
+
   /* -------------------------------------------------------------- toolbar */
   const pageRows = () => P.rows.slice(P.page * P.pageSize, (P.page + 1) * P.pageSize);
   const checkedTargets = () => [...new Set([...P.checked].map(WS.targetOf).filter(Boolean))];
@@ -281,7 +367,10 @@
     const left = P.checked.size ? WS.bulkBar({ checked: P.checked, keys: P.rows.map((r) => r.id), canSelectAll: P.rows.some((r) => !P.checked.has(r.id)),
       targets: checkedTargets, redraw: () => render({ keepRail: true }) }) : el("span", { class: "count" },
       n === total ? plural(n, "node") : `${fmt(n)} of ${plural(total, "node")}`);
-    $("toolbar").replaceChildren(left, el("span", { class: "grow" }), pager);
+    const sharedChip = P.sharedBy ? el("button", {
+      class: "chip sm selected", title: "Show every node again", onclick: () => { P.sharedBy = null; changed(); },
+    }, icon("join_inner", "xs"), el("span", { class: "label" }, `Shared by ${sharedLabel(P.sharedBy.ids)}`), icon("close", "xs")) : null;
+    $("toolbar").replaceChildren(left, sharedChip || "", el("span", { class: "grow" }), pager);
     $("q-result").textContent = P.q ? `${fmt(n)} ${n === 1 ? "node" : "nodes"}` : "";
   }
   function goPage(p) {
@@ -322,7 +411,7 @@
       const tr = el("tr", {
         "data-id": r.id,
         class: `${P.checked.has(r.id) ? "checked" : ""}${P.detail && P.detail.id === r.id ? " selected" : ""}`,
-        title: "Click for details · double-click to show in the graph · right-click to tag",
+        title: "Click for details · Ctrl / ⌘-click or Shift-click to select · double-click to show in the graph · right-click to tag",
       }, WS.rowCheckbox(r.id, P.checked.has(r.id)), ...cols.map((c) => c.cell(r)));
       tbody.append(tr);
     }
@@ -339,6 +428,12 @@
     if (cb) {
       WS.toggleCheck(P.checked, pageRows().map((r) => r.id), P.anchor, id, e.shiftKey);
       P.anchor = id;
+      render({ keepRail: true });
+      return;
+    }
+    // Ctrl / ⌘-click: this row; Shift-click: every row from the last one clicked
+    if (WS.selectClick(e, P.checked, P.rows.map((r) => r.id), P.anchor, id)) {
+      if (!e.shiftKey || !P.anchor) P.anchor = id;
       render({ keepRail: true });
       return;
     }
@@ -417,11 +512,21 @@
     tr && tr.scrollIntoView({ block: "nearest" });
   }
 
+  // Shift+↓ / ↑: select the row and move on, selecting as you go
+  function extendSelection(delta) {
+    if (P.detail) P.checked.add(P.detail.id);
+    moveSelection(delta);
+    if (P.detail) P.checked.add(P.detail.id);
+    render({ keepRail: true });
+  }
+
   function wire() {
     const q = $("q");
     q.value = P.q;
     q.addEventListener("input", debounce(() => { P.q = q.value; changed(); }, 180));
     $("grid-wrap").addEventListener("click", onGridClick);
+    // no text selection on Shift / Ctrl-clicks: they select rows
+    $("grid-wrap").addEventListener("mousedown", (e) => { if ((e.shiftKey || e.ctrlKey || e.metaKey) && e.target.closest("tbody tr")) e.preventDefault(); });
     $("grid-wrap").addEventListener("dblclick", (e) => {
       const tr = e.target.closest("tr[data-id]");
       if (tr && !e.target.closest("[data-check]")) WS.showInGraph({ id: tr.dataset.id });
@@ -441,6 +546,8 @@
       if (e.key === "Escape") { if (document.querySelector(".menu")) SS.closeMenus(); else if (!typing) closeDetail(); return; }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/") { e.preventDefault(); q.focus(); q.select(); }
+      else if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); extendSelection(e.key === "ArrowDown" ? 1 : -1); }
+      else if (e.key === "s" || e.key === "S") { e.preventDefault(); selectShared(); }
       else if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); moveSelection(1); }
       else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); moveSelection(-1); }
       else if ((e.key === " " || e.key === "x") && P.detail) {
@@ -452,7 +559,7 @@
       else if (e.key === "ArrowLeft" && P.page > 0) goPage(P.page - 1);
     });
     WS.on((what) => {
-      if (what === "reload") { buildMeta(); P.checked = new Set([...P.checked].filter((id) => W.nodes.has(id))); }
+      if (what === "reload") { buildMeta(); P.checked = new Set([...P.checked].filter((id) => W.nodes.has(id))); P.sharedBy = null; }
       render();
       renderDetail();
     });

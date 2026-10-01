@@ -337,7 +337,7 @@
       frag.append(el("tr", {
         "data-key": r.key,
         class: `${P.checked.has(r.key) ? "checked" : ""}${P.detail === r.key ? " selected" : ""}${r.severity ? ` f-row sev-${r.severity}` : ""}`,
-        title: "Click for details · double-click to show in the graph · right-click to tag or filter",
+        title: "Click for details · Ctrl / ⌘-click or Shift-click to select · double-click to show in the graph · right-click to tag or filter",
       }, WS.rowCheckbox(r.key, P.checked.has(r.key)), ...cols.map((c) => c.cell(r))));
     }
     frag.append(el("tr", { class: "more" }, el("td", { colspan: cols.length + 1 },
@@ -366,6 +366,12 @@
     if (e.target.closest("[data-check]")) {
       WS.toggleCheck(P.checked, P.rows.map((r) => r.key), P.anchor, key, e.shiftKey);
       P.anchor = key;
+      render({ keepRail: true });
+      return;
+    }
+    // Ctrl / ⌘-click: this row; Shift-click: every row from the last one clicked
+    if (WS.selectClick(e, P.checked, P.rows.map((r) => r.key), P.anchor, key)) {
+      if (!e.shiftKey || !P.anchor) P.anchor = key;
       render({ keepRail: true });
       return;
     }
@@ -481,6 +487,13 @@
       setTimeout(() => tr.classList.remove("flash"), 2200);
     }
   }
+  // Shift+↓ / ↑: select the row and move on, selecting as you go
+  function extendSelection(delta) {
+    if (P.detail && rowIndex(P.detail) >= 0) P.checked.add(P.detail);
+    moveSelection(delta);
+    if (P.detail) P.checked.add(P.detail);
+    render({ keepRail: true });
+  }
   function reveal(key) {
     const ev = key.startsWith("event:") && W.events.get(key.slice(6));
     if (ev) WS.showInGraph({ id: ev.id, para: ev.p[0] });
@@ -493,6 +506,8 @@
     const wrap = $("grid-wrap");
     wrap.addEventListener("scroll", onScroll, { passive: true });
     wrap.addEventListener("click", onGridClick);
+    // no text selection on Shift / Ctrl-clicks: they select rows
+    wrap.addEventListener("mousedown", (e) => { if ((e.shiftKey || e.ctrlKey || e.metaKey) && e.target.closest("tr[data-key]")) e.preventDefault(); });
     wrap.addEventListener("dblclick", (e) => {
       const tr = e.target.closest("tr[data-key]");
       if (tr && !e.target.closest("[data-check]")) reveal(tr.dataset.key);
@@ -513,6 +528,7 @@
       if (e.key === "Escape") { if (document.querySelector(".menu")) SS.closeMenus(); else if (!typing) closeDetail(); return; }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/") { e.preventDefault(); q.focus(); q.select(); }
+      else if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); extendSelection(e.key === "ArrowDown" ? 1 : -1); }
       else if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); moveSelection(1); }
       else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); moveSelection(-1); }
       else if ((e.key === " " || e.key === "x") && P.detail && rowIndex(P.detail) >= 0) {

@@ -58,6 +58,8 @@
     clusters: new Map(),
     selectedCluster: null,
     multi: false, // Ctrl+↓: the selected node and everything linked to it are selected
+    picked: new Set(), // nodes (and clusters) selected together with Ctrl / ⌘- and Shift-clicks
+    pickAnchor: null, // where a Shift-click range starts
     cycle: null, // Alt+←/→: { list, i } over the node the cycle started from and its links
     thoughtReturn: null, // Ctrl+↑: { from, thought } to come back to
     litClusters: new Set(),
@@ -756,7 +758,8 @@
       const r = $("graph").getBoundingClientRect();
       const x = r.left + p.pointer.DOM.x, y = r.top + p.pointer.DOM.y;
       hideTip();
-      if (network.isCluster(id)) clusterMenu(id, x, y);
+      if (S.picked.size > 1 && (S.picked.has(id) || [...S.picked].some((x) => drawnId(x) === id))) M.bulkMenu(x, y, pickedTargets);
+      else if (network.isCluster(id)) clusterMenu(id, x, y);
       else if (S.nodes.has(id)) M.itemMenu(id, x, y, { target: targetOf(id), onFilter: filterOn, onSessions: showSessions });
     });
     network.on("doubleClick", (p) => {
@@ -825,15 +828,19 @@
       S.litEdges = new Set(edgeIndices.filter((id) => lit(edges[id].fromId) && lit(edges[id].toId)));
       return;
     }
-    let selEnd = S.selected || S.selectedCluster;
+    const sel = S.picked.size ? [...S.picked] : [S.selected || S.selectedCluster];
+    const selEnds = new Set(sel);
     for (const [cid, c] of S.clusters) {
-      if (c.members.has(S.selected)) selEnd = cid;
+      for (const x of sel) if (c.members.has(x)) { selEnds.delete(x); selEnds.add(cid); }
       if (S.neighbors.has(cid)) { S.litClusters.add(cid); continue; }
       for (const id of S.neighbors) if (c.members.has(id)) { S.litClusters.add(cid); break; }
     }
     const lit = (end) => (S.clusters.has(end) ? S.litClusters.has(end) : S.neighbors.has(end));
-    const edges = network.body.nodes[selEnd] ? network.getConnectedEdges(selEnd) : [];
-    S.litEdges = new Set(edges.filter((id) => { const e = network.body.edges[id]; return lit(e.fromId === selEnd ? e.toId : e.fromId); }));
+    S.litEdges = new Set();
+    for (const end of selEnds) {
+      if (!network.body.nodes[end]) continue;
+      for (const id of network.getConnectedEdges(end)) { const e = network.body.edges[id]; if (lit(e.fromId === end ? e.toId : e.fromId)) S.litEdges.add(id); }
+    }
   }
 
   function setPhysics(on) {
@@ -1235,6 +1242,8 @@
 
   function onClick(p) {
     hideTip();
+    const ev = (p.event && (p.event.srcEvent || p.event)) || {};
+    if (p.nodes.length && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) { pick(p.nodes[0], ev.shiftKey); return; }
     if (p.nodes.length && network && network.isCluster(p.nodes[0])) { selectCluster(p.nodes[0]); return; }
     if (p.nodes.length) selectNode(p.nodes[0]);
     else if (!p.edges.length) clearSelection();
@@ -1246,7 +1255,8 @@
     S.selected = id;
     S.selectedCluster = null;
     S.multi = false;
-    S.neighbors = new Set([id, ...(S.edgesByNode.get(id) || []).map((e) => (e.from === id ? e.to : e.from))]);
+    S.picked = new Set();
+    S.neighbors = new Set([id, ...neighboursOf(id)]);
     if (network && S.visibleNodes.has(id)) {
       revealNode(id);
       network.selectNodes([id]);
@@ -1273,6 +1283,7 @@
     S.selected = null;
     S.selectedCluster = cid;
     S.multi = false;
+    S.picked = new Set();
     S.neighbors = new Set([cid, ...network.getConnectedNodes(cid)]);
     S.matchSource = S.search ? searchSource() : null;
     network.selectNodes([cid]);
@@ -1283,6 +1294,7 @@
   }
   /** after re-clustering: a selected cluster that still exists gets its new links, one that is gone is dropped */
   function refreshClusterSelection() {
+    if (S.picked.size) return refreshPicked();
     const cid = S.selectedCluster;
     if (!cid) return;
     if (S.clusters.has(cid)) {
@@ -1314,10 +1326,96 @@
     renderStats(S.data && S.data.stats);
   }
 
+  /* ---------------------------------------------------- multi-selection */
+  /** what a node links to; for a cluster, what is drawn linked to it */
+  function neighboursOf(id) {
+    if (S.clusters.has(id)) return network ? network.getConnectedNodes(id) : [];
+    return (S.edgesByNode.get(id) || []).map((e) => (e.from === id ? e.to : e.from));
+  }
+  // Ctrl / ⌘-click adds or removes a node; Shift-click adds everything from the last node picked to this one
+  function pick(id, range) {
+    const set = S.picked.size ? new Set(S.picked) : new Set([S.selected || S.selectedCluster].filter(Boolean));
+    const anchor = S.pickAnchor || S.selected || S.selectedCluster;
+    if (range && anchor && anchor !== id) {
+      const path = pathBetween(anchor, id);
+      if (!path) navHint("Nothing links these two nodes – added the one clicked");
+      for (const x of path || [id]) set.add(x);
+    } else {
+      set.has(id) ? set.delete(id) : set.add(id);
+      S.pickAnchor = id;
+    }
+    setPicked(set);
+  }
+  /** select these nodes together (one: a plain selection, none: nothing) */
+  function setPicked(set) {
+    const anchor = S.pickAnchor;
+    if (set.size < 2) {
+      const [only] = set;
+      if (!only) return clearSelection();
+      network && network.isCluster(only) ? selectCluster(only) : selectNode(only, { quiet: true });
+      S.pickAnchor = anchor;
+      return;
+    }
+    S.picked = set;
+    S.selected = S.selectedCluster = null;
+    S.multi = false;
+    S.neighbors = new Set();
+    for (const x of set) { S.neighbors.add(x); for (const nb of neighboursOf(x)) S.neighbors.add(nb); }
+    if (network) network.selectNodes([...new Set([...set].map(drawnId))].filter((x) => network.body.nodes[x]));
+    const occ = [...set].flatMap((x) => (S.nodes.has(x) ? visibleOcc(S.nodes.get(x)) : []));
+    S.matchSource = { kind: "node", id: null, title: plural(set.size, "selected node"), occ };
+    updateLit();
+    network && network.redraw();
+    renderSelection();
+    renderPanel();
+  }
+  /** after the graph is filtered: keep the picked nodes that are still there */
+  function refreshPicked() {
+    const still = new Set([...S.picked].filter((x) => S.visibleNodes.has(x) || S.clusters.has(x)));
+    if (still.size !== S.picked.size || still.size < 2) setPicked(still);
+    else if (network) network.selectNodes([...new Set([...still].map(drawnId))].filter((x) => network.body.nodes[x]));
+  }
+  /** from one node to another: the turns between them in a conversation, else the shortest path the graph draws */
+  function pathBetween(a, b) {
+    const na = S.nodes.get(a), nb = S.nodes.get(b);
+    const cid = threadConv(na);
+    if (cid && cid === threadConv(nb)) {
+      const list = (S.convNodes.get(cid) || []).filter((n) => S.visibleNodes.has(n.id)).sort((x, y) => threadPos(x) - threadPos(y));
+      const [i, j] = [list.indexOf(na), list.indexOf(nb)].sort((x, y) => x - y);
+      if (i >= 0) return list.slice(i, j + 1).map((n) => n.id);
+    }
+    if (!network) return null;
+    const from = drawnId(a), to = drawnId(b), prev = new Map([[from, null]]), queue = [from];
+    while (queue.length) {
+      const x = queue.shift();
+      if (x === to) break;
+      for (const y of network.getConnectedNodes(x)) if (!prev.has(y)) { prev.set(y, x); queue.push(y); }
+    }
+    if (!prev.has(to)) return null;
+    const path = [];
+    for (let x = to; x !== null; x = prev.get(x)) path.push(x);
+    return path.reverse();
+  }
+  /** the taggable targets of the picked nodes (clusters and tool hubs have none) */
+  const pickedTargets = () => [...new Set([...S.picked].map((x) => (S.nodes.has(x) ? targetOf(x) : null)).filter(Boolean))];
+  // S: select what the selected nodes have in common
+  function selectShared() {
+    if (S.picked.size < 2) return navHint("Select two or more nodes first (Ctrl / ⌘-click them), then press S");
+    const ids = [...S.picked], prev = new Set(S.picked), prevAnchor = S.pickAnchor;
+    const shared = M.sharedNodes(ids, neighboursOf).filter((x) => S.visibleNodes.has(x) || S.clusters.has(x));
+    if (!shared.length) return navHint(`The ${plural(ids.length, "selected node")} have nothing in common`);
+    setPicked(new Set(shared));
+    const what = ids.slice(0, 2).map((x) => `“${S.nodes.has(x) ? S.nodes.get(x).label : (S.clusters.get(x) || {}).label || x}”`).join(" and ");
+    snack(`${plural(shared.length, "node")} shared by ${what}${ids.length > 2 ? ` and ${plural(ids.length - 2, "other")}` : ""}`,
+      { label: "Undo", run: () => { S.pickAnchor = prevAnchor; setPicked(prev); } }, 6000);
+  }
+
   function clearSelection() {
     S.selected = null;
     S.selectedCluster = null;
     S.multi = false;
+    S.picked = new Set();
+    S.pickAnchor = null;
     S.neighbors = null;
     if (S.search) S.matchSource = searchSource();
     else S.matchSource = null;
@@ -1439,6 +1537,7 @@
     else if (k === "ArrowDown" && ctrl) selectLinked();
     else if ((k === "ArrowUp" || k === "ArrowDown") && alt) stepConversation(dir);
     else if (k === "?") $("key-help").classList.toggle("hidden");
+    else if ((k === "s" || k === "S") && !ctrl && !e.altKey) selectShared();
     else return false;
     e.preventDefault();
     return true;
@@ -1462,6 +1561,7 @@
 
   function renderSelection() {
     const box = $("selection");
+    if (S.picked.size > 1) { renderPickedSelection(box); return; }
     const c = S.selectedCluster && S.clusters.get(S.selectedCluster);
     if (c) { renderClusterSelection(box, c); return; }
     const n = S.selected && S.nodes.get(S.selected);
@@ -1495,6 +1595,33 @@
         el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => focusNode(n.id) }, icon("center_focus_strong", "sm")),
         el("a", { class: "icon-btn sm", title: "Open in the Nodes table", href: `/nodes?select=${encodeURIComponent(n.id)}`, target: "synthsift-nodes" }, icon("table_rows", "sm")),
         el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
+    box.classList.remove("hidden");
+  }
+
+  /** several nodes selected together: what they are, and tag / shared / clear */
+  function renderPickedSelection(box) {
+    const ids = [...S.picked];
+    const byKind = new Map();
+    for (const x of ids) {
+      const label = S.nodes.has(x) ? kindOf(S.nodes.get(x)).label : "Cluster";
+      byKind.set(label, (byKind.get(label) || 0) + 1);
+    }
+    const chip = (x) => {
+      const n = S.nodes.get(x), c = S.clusters.get(x);
+      const k = n ? kindOf(n) : { color: c ? c.color : "#80868b" };
+      return el("button", { class: "chip sm", title: "Centre in graph", onclick: () => focusNode(x) },
+        el("span", { class: "swatch", style: { background: k.color } }), el("span", { class: "label" }, n ? n.label : c ? c.label : x));
+    };
+    const tagBtn = el("button", { class: "btn tonal sm", title: "Tag every selected node (or right-click one of them)",
+      onclick: () => { const r = tagBtn.getBoundingClientRect(); M.bulkMenu(r.left, r.bottom + 4, pickedTargets); } }, icon("sell"), "Tag");
+    const body = el("div", { class: "grow" },
+      el("div", { class: "title" }, plural(ids.length, "node") + " selected"),
+      el("div", { class: "sub" }, ...[...byKind].map(([k, n]) => el("span", { class: "tag" }, `${fmt(n)} ${k}`))),
+      el("div", { class: "chip-row picked-list" }, ids.slice(0, 40).map(chip), ids.length > 40 ? el("span", { class: "muted" }, `+ ${fmt(ids.length - 40)} more`) : null),
+      el("div", { class: "chip-row", style: { marginTop: "10px" } }, tagBtn,
+        el("button", { class: "btn text sm", title: "Select what they have in common (S)", onclick: selectShared }, icon("join_inner"), "Shared")));
+    box.replaceChildren(el("span", { class: "ico", style: { background: "var(--primary)" } }, icon("select_all")), body,
+      el("div", {}, el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
     box.classList.remove("hidden");
   }
 
@@ -1963,7 +2090,7 @@
     if (!q) {
       S.search = null;
       $("q-result").textContent = "";
-      if (!S.selected) S.matchSource = null;
+      if (!S.selected && !S.picked.size) S.matchSource = null;
       updateLit();
       network && network.redraw();
       renderPanel();
@@ -1992,7 +2119,7 @@
     }
     S.search = { q, re, occ, byPara, nodeIds };
     $("q-result").textContent = `${plural(nodeIds.size, "node")} · ${plural(byPara.size, "paragraph")}`;
-    if (!S.selected || switchTab) { S.selected = S.selectedCluster = null; S.neighbors = null; renderSelection(); S.matchSource = searchSource(); }
+    if (!S.selected || switchTab) { S.selected = S.selectedCluster = null; S.picked = new Set(); S.neighbors = null; renderSelection(); S.matchSource = searchSource(); }
     updateLit();
     network && network.redraw();
     if (switchTab) setTab("matches"); else renderPanel();

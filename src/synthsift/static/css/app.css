@@ -771,6 +771,9 @@ body.panel-only .panel { width: 100%; flex: 1 1 auto; }
 .rail-section h3 { display: flex; align-items: center; gap: 6px; margin: 8px 0 8px 2px; font-size: 13px; font-weight: 500; color: var(--on-surface-variant); }
 .rail-section h3 button { margin-left: auto; font-size: 11px; background: none; border: 0; color: var(--primary); cursor: pointer; }
 .rail-section h3 a { margin-left: auto; font-size: 11px; color: var(--primary); text-decoration: none; }
+.rail-section .hint { margin: 6px 2px 0; font-size: 12px; line-height: 1.4; color: var(--on-surface-variant); }
+#shared-by { width: 100%; }
+#shared-by button { flex: 1; justify-content: center; padding: 0 4px; }
 .rail-section .chip-row { gap: 6px; }
 .rail-section .field-row { display: flex; align-items: center; gap: 8px; margin: 6px 2px; font-size: 13px; }
 .rail-section .field-row .text-input, .rail-section .field-row .select { height: 32px; font-size: 13px; }
@@ -1125,3 +1128,6 @@ table.tail .alt { margin-left: 4px; color: var(--on-surface-variant); vertical-a
   .dash-body { padding: 10px 10px 32px; }
   .tail-grid { grid-template-columns: 1fr; }
 }
+/* several nodes selected together in the graph */
+.picked-list { margin-top: 8px; max-height: 116px; overflow: auto; }
+.picked-list .chip { max-width: 220px; }
