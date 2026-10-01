@@ -401,13 +401,14 @@ const WS = (() => {
   }
 
   /* ------------------------------------------------------ detail views */
-  /** `copy`: text copied by a small superscript button right after the title */
-  function detailHead(icoName, color, title, chips, onClose, copy = null) {
-    const copyBtn = copy ? el("button", { class: "copy-sup", title: "Copy", "aria-label": "Copy",
-      onclick: () => { navigator.clipboard && navigator.clipboard.writeText(copy); snack("Copied"); } }, icon("content_copy")) : null;
+  /** small superscript buttons right after the title: `copy` (text to copy) and `graph` (show it in the graph) */
+  function detailHead(icoName, color, title, chips, onClose, { copy = null, graph = null } = {}) {
+    const sup = (ic, label, onclick) => el("button", { class: "title-sup", title: label, "aria-label": label, onclick }, icon(ic));
     return el("div", { class: "detail-head" },
       el("span", { class: "ico", style: { background: color } }, icon(icoName)),
-      el("div", { class: "grow" }, el("div", { class: "title" }, title, copyBtn), el("div", { class: "sub" }, ...chips)),
+      el("div", { class: "grow" }, el("div", { class: "title" }, title,
+        copy ? sup("content_copy", "Copy", () => { navigator.clipboard && navigator.clipboard.writeText(copy); snack("Copied"); }) : null,
+        graph ? sup("hub", "Show in graph", graph) : null), el("div", { class: "sub" }, ...chips)),
       onClose ? el("button", { class: "icon-btn sm", title: "Close", onclick: onClose }, icon("close", "sm")) : null);
   }
   const tag = (text) => el("span", { class: "tag" }, text);
@@ -462,8 +463,6 @@ const WS = (() => {
     if (first) body.append(el("div", { class: "cell-muted" }, `Seen ${fmtTime(first)}${last && last !== first ? " – " + fmtTime(last) : ""}`));
     if (fs.length) body.append(el("h4", {}, icon("shield", "xs"), "Findings", el("span", { class: "count" }, fmt(fs.length))), ...fs.slice(0, 20).map((f) => findingCard(f)));
     body.append(...annotationSection(target));
-    body.append(el("div", { class: "detail-actions" },
-      el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id }) }, icon("hub"), "Show in graph")));
     if (convs.length) {
       body.append(el("h4", {}, icon("forum", "xs"), "Conversations", el("span", { class: "count" }, fmt(convs.length))),
         el("div", { class: "nb-list" }, convs.slice(0, 30).map((c) => el("button", {
@@ -494,7 +493,8 @@ const WS = (() => {
     }
     const occ = occurrencesEl(n);
     if (occ.count) body.append(el("h4", {}, icon("format_quote", "xs"), n.type === "entity" ? "Occurrences" : "Text", el("span", { class: "count" }, fmt(occ.count))), occ.el);
-    return el("div", {}, detailHead(k.icon, n.type === "conversation" && convs[0] ? convs[0].color : k.color, n.label, chips, onClose, n.label), body);
+    return el("div", {}, detailHead(k.icon, n.type === "conversation" && convs[0] ? convs[0].color : k.color, n.label, chips, onClose,
+      { copy: n.label, graph: () => showInGraph({ id }) }), body);
   }
 
   /** a turn with the turns around it */
@@ -543,11 +543,10 @@ const WS = (() => {
     };
     drawCtx();
     body.append(...annotationSection("event:" + evId),
-      el("div", { class: "detail-actions" },
-        el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id: evId, para: ev.p[0] }) }, icon("hub"), "Show in graph")),
       el("h4", {}, icon("forum", "xs"), "In context", el("span", { class: "grow" }), stepper("before", "before"), stepper("after", "after")), ctxBox);
     return el("div", {}, detailHead(SS.ROLE_ICON[ev.type] || "chat", k.color, ev.label,
-      [tag(`${c.host} / ${c.user}`), tag(c.title), ev.ts ? tag(fmtTime(ev.ts)) : null].filter(Boolean), onClose), body);
+      [tag(`${c.host} / ${c.user}`), tag(c.title), ev.ts ? tag(fmtTime(ev.ts)) : null].filter(Boolean), onClose,
+      { graph: () => showInGraph({ id: evId, para: ev.p[0] }) }), body);
   }
 
   function convDetail(cid, { onClose, onSelect } = {}) {
@@ -566,14 +565,14 @@ const WS = (() => {
           .flatMap(([k, v]) => [el("dt", {}, k.replace(/_/g, " ")), el("dd", {}, String(v))])),
       fs.length ? el("div", { class: "sec-summary", style: { marginTop: "12px" } }, [...SS.SEV_ORDER].reverse().filter((s) => bySev.get(s))
         .map((s) => el("span", { class: `chip sm sev-${s}` }, el("span", { class: "sev-chip" }, s), el("span", { class: "count" }, fmt(bySev.get(s)))))) : null,
-      ...annotationSection("conv:" + cid),
-      el("div", { class: "detail-actions" }, el("button", { class: "btn tonal sm", onclick: () => showInGraph({ id: "conv:" + cid }) }, icon("hub"), "Show in graph")));
+      ...annotationSection("conv:" + cid));
     if (tagged.length) {
       body.append(el("h4", {}, icon("chat", "xs"), "Tagged turns", el("span", { class: "count" }, fmt(tagged.length))),
         el("div", { class: "nb-list" }, tagged.map(([t, a]) => el("button", { class: "chip sm", onclick: () => onSelect && onSelect(t) },
           el("span", { class: "label" }, a.label || t), el("span", { class: "tag-row", html: tagChipsHTML(a.tags) })))));
     }
-    return el("div", {}, detailHead("forum", c.color, c.title, [tag("session"), ...SS.metaChips(c.meta).slice(0, 3)], onClose), body);
+    return el("div", {}, detailHead("forum", c.color, c.title, [tag("session"), ...SS.metaChips(c.meta).slice(0, 3)], onClose,
+      { graph: () => showInGraph({ id: "conv:" + cid }) }), body);
   }
 
   return {

@@ -819,17 +819,17 @@ body.panel-only .panel { width: 100%; flex: 1 1 auto; }
 .detail-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; gap: 12px; padding: 14px 12px 12px 16px; background: var(--surface-container); }
 .detail-head .ico { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: #fff; flex: none; }
 .detail-head .title { font-size: 16px; font-weight: 500; line-height: 22px; word-break: break-word; }
-.copy-sup {
+.title-sup {
   vertical-align: super; margin-left: 2px; padding: 1px; border: 0; border-radius: 4px; background: transparent; line-height: 1;
   color: var(--on-surface-variant); cursor: pointer;
 }
-.copy-sup .msi { font-size: 13px; }
-.copy-sup:hover { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.title-sup .msi { font-size: 13px; }
+.title-sup + .title-sup { margin-left: 0; }
+.title-sup:hover { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .detail-head .sub { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .detail-body { padding: 8px 16px 32px; }
 .detail-body h4 { margin: 18px 0 8px; font-size: 12px; font-weight: 500; color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: 0.4px; display: flex; align-items: center; gap: 6px; }
 .detail-body h4 .count { text-transform: none; letter-spacing: 0; font-weight: 400; }
-.detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .occ { margin: 0 0 10px; border: 1px solid var(--outline-variant); border-radius: var(--r-m); overflow: hidden; }
 .occ-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; background: var(--surface-container); font-size: 12px; color: var(--on-surface-variant); }
 .occ-head .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }

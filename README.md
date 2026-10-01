@@ -428,7 +428,7 @@ extracted terms.
   - Tags a turn inherits from its session are drawn outlined.
 - **Detail pane**: click a row to see its findings, tags and comment, linked
   nodes and every paragraph it appears in, with the word highlighted.
-  Double-click, <kbd>Enter</kbd> or *Show in graph* opens the graph in the same
+  Double-click, <kbd>Enter</kbd> or the graph icon by its title opens the graph in the same
   tab with it selected; a turn or session also narrows the scope to its
   conversation. *Back* returns to the table.
 - **Keys**: <kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>j</kbd>/<kbd>k</kbd>) move
