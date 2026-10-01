@@ -267,13 +267,15 @@ def test_ingest_agent_state_folders_and_archives(tmp_path):
                    ("unknown-host", "alice", "claude_code", ""), ("unknown-host", "alice", "claude_code", "")]
 
 
-def test_samples_include_both_agents():
+def test_samples_include_every_agent():
     rep = read_zip((ROOT / "samples" / "synthsift-samples.zip").read_bytes(), "s")
     assert not rep.warnings
     by_harness = {}
     for c in rep.conversations:
         by_harness.setdefault(c.harness, []).append(c)
     assert len(by_harness["claude_code"]) == 4 and len(by_harness["openclaw"]) == 4
+    assert len(by_harness["gemini"]) == 4 and len(by_harness["antigravity"]) == 3
+    assert {c.meta.get("app") for c in by_harness["antigravity"]} == {"Antigravity CLI", "Antigravity IDE", None}
     titles = {c.display_title for c in by_harness["openclaw"]}
     assert {"Groceries & dentist", "#homelab"} <= titles
 

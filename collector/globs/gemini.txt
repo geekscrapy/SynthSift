@@ -1,16 +1,25 @@
 # Gemini CLI (Google) – session transcripts
 # Syntax: see claude_code.txt.
-# SynthSift's gemini parser is a placeholder: collected files are kept but
-# skipped (with a warning) until it is written.
-# Sessions are deleted after 30 days by default (general.sessionRetention.maxAge).
+#
+# Sessions are deleted after 30 days by default (general.sessionRetention.maxAge
+# in settings.json).  <project> is a short name for the project folder (a
+# SHA-256 of its path in older releases).
 
 # $GEMINI_CLI_HOME replaces the home directory when set
 ${GEMINI_CLI_HOME}/.gemini/./tmp/*/chats/session-*.json*
+${GEMINI_CLI_HOME}/.gemini/./tmp/*/chats/*/*.jsonl
 ${GEMINI_CLI_HOME}/.gemini/./tmp/*/checkpoint-*.json
+${GEMINI_CLI_HOME}/.gemini/./tmp/*/.project_root
 
-# Automatic session recording (macOS / Linux; Windows: C:\Users\<you>\.gemini)
-#   tmp/<project_hash>/chats/session-<time>-<id>.jsonl   (.json in older releases)
+# macOS / Linux, and Windows (C:\Users\<you>\.gemini)
+#   tmp/<project>/chats/session-<time>-<id>.jsonl   a session (.json before mid-2026)
+#   tmp/<project>/chats/<session id>/<id>.jsonl      the sub-agents it started
+#   tmp/<project>/checkpoint-<tag>.json              chats saved with /resume save <tag>
+#   tmp/<project>/.project_root                      the project folder's path (the sessions' cwd)
 ~/.gemini/./tmp/*/chats/session-*.json*
-
-# Chats saved by hand with /resume save <tag>
+~/.gemini/./tmp/*/chats/*/*.jsonl
 ~/.gemini/./tmp/*/checkpoint-*.json
+~/.gemini/./tmp/*/.project_root
+
+# half-written copies the CLI renames into place
+!*.tmp-*

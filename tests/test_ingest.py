@@ -33,14 +33,12 @@ def test_read_zip_routes_by_folder(zip_of):
 def test_read_zip_reports_stub_harnesses_and_bad_files(zip_of):
     rep = read_zip(zip_of({
         "h/u/hermes/s.jsonl": "{}",
-        "h/u/gemini/s.json": "{}",
         "h/u/example/broken.json": "{not json",
         "h/u/whatever/sniffed.json": {"format": "synthsift.example/v1", **CONV},
     }), "ds")
     assert [c.session for c in rep.conversations] == ["sniffed.json"]
     text = "\n".join(rep.warnings)
     assert "hermes parser is a placeholder" in text
-    assert "gemini parser is a placeholder" in text
     assert "broken.json" in text
 
 

@@ -40,7 +40,7 @@ def test_openclaw_sessions_spawned_by_another_are_subagents():
 def test_payload_carries_subagents_and_hit_values(sample_workspace):
     p = sample_workspace.payload
     subs = [e for e in p["events"] if e.get("sub")]
-    assert subs and {e["tool"] for e in subs} == {"Task"}
+    assert subs and {e["tool"] for e in subs} == {"Task", "invoke_agent", "browser_subagent"}
     assert any(c["meta"].get("subagent") for c in p["conversations"])
     assert all("value" in f for f in p["findings"])
 

@@ -5,12 +5,12 @@ import pytest
 from synthsift.harnesses import ParserNotImplemented, all_parsers, get_parser, sniff_parser
 from synthsift.harnesses.example import ExampleParser
 
-STUBS = ["gemini", "antigravity", "hermes"]
+STUBS = ["hermes"]
 
 
 def test_registry_has_example_and_stubs():
     names = {p.name: p for p in all_parsers()}
-    for ready in ("example", "claude_code", "openclaw"):
+    for ready in ("example", "claude_code", "openclaw", "gemini", "antigravity"):
         assert names[ready].implemented
     for stub in STUBS:
         assert stub in names and not names[stub].implemented

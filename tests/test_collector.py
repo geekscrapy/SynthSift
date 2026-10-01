@@ -27,6 +27,12 @@ sys.modules["synthsift_collect"] = sc  # dataclasses look the module up while th
 spec.loader.exec_module(sc)
 
 
+GEMINI_SESSION = (b'{"sessionId": "g-1", "projectHash": "proj"}\n'
+                  b'{"id": "m1", "timestamp": "2026-06-01T10:00:00Z", "type": "user", "content": "hello"}\n')
+AG_TRANSCRIPT = (b'{"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "status": "DONE", '
+                 b'"created_at": "2026-06-01T11:00:00Z", "content": "<USER_REQUEST>hi</USER_REQUEST>"}\n')
+
+
 def fake_home(tmp_path: Path) -> tuple[Path, object]:
     """A home directory with data from every agent; returns it and an open
     OpenClaw database connection (a live gateway: rows still only in the WAL)."""
@@ -53,8 +59,18 @@ def fake_home(tmp_path: Path) -> tuple[Path, object]:
     legacy.mkdir(parents=True)
     (legacy / "old.jsonl").write_bytes(jsonl(oc_events()))
 
-    (home / ".gemini" / "tmp" / "abc123" / "chats").mkdir(parents=True)
-    (home / ".gemini" / "tmp" / "abc123" / "chats" / "session-2026-06-01T10-00-a1.jsonl").write_text("{}\n")
+    gem = home / ".gemini" / "tmp" / "proj"
+    (gem / "chats" / "s-2").mkdir(parents=True)
+    (gem / ".project_root").write_text("/home/alice/proj\n")
+    (gem / "chats" / "session-2026-06-01T10-00-a1.jsonl").write_bytes(GEMINI_SESSION)
+    (gem / "chats" / "session-2026-06-01T10-00-a1.jsonl.tmp-77").write_bytes(GEMINI_SESSION)  # mid-rename copy
+    (gem / "chats" / "s-2" / "sub-1.jsonl").write_bytes(GEMINI_SESSION)
+    brain = home / ".gemini" / "antigravity-cli" / "brain" / "0c1d2e3f-aaaa-bbbb-cccc-111122223333"
+    (brain / ".system_generated" / "logs").mkdir(parents=True)
+    (brain / ".system_generated" / "logs" / "transcript.jsonl").write_bytes(AG_TRANSCRIPT)
+    (brain / "task.md").write_text("# Task\n")
+    (home / ".gemini" / "antigravity-cli" / "history.jsonl").write_text(
+        '{"display": "hi", "workspace": "file:///home/alice/proj", "conversationId": "0c1d2e3f-aaaa-bbbb-cccc-111122223333"}\n')
     (home / ".hermes").mkdir()
     import sqlite3
     sqlite3.connect(home / ".hermes" / "state.db").execute("CREATE TABLE sessions (id)").connection.close()
@@ -76,9 +92,13 @@ def test_collects_every_agent_into_the_upload_layout(tmp_path):
         matches = sc.find(sc.load_rules(GLOBS), [("alice", home, True)], env={})
         rels = sorted((m.agent, m.rel) for m in matches)
         assert rels == [
+            ("antigravity", "antigravity-cli/brain/0c1d2e3f-aaaa-bbbb-cccc-111122223333/.system_generated/logs/transcript.jsonl"),
+            ("antigravity", "antigravity-cli/history.jsonl"),
             ("claude_code", "projects/-home-alice-proj/s-1.jsonl"),
             ("claude_code", "projects/-home-alice-proj/s-1/subagents/agent-a7.jsonl"),
-            ("gemini", "tmp/abc123/chats/session-2026-06-01T10-00-a1.jsonl"),
+            ("gemini", "tmp/proj/.project_root"),
+            ("gemini", "tmp/proj/chats/s-2/sub-1.jsonl"),
+            ("gemini", "tmp/proj/chats/session-2026-06-01T10-00-a1.jsonl"),
             ("hermes", "state.db"),
             ("openclaw", "agents/work/agent/openclaw-agent.sqlite"),
             ("openclaw", "agents/work/sessions/cold/x.jsonl.zst"),
@@ -90,7 +110,7 @@ def test_collects_every_agent_into_the_upload_layout(tmp_path):
         rep = sc.write_zip(matches, out, "laptop")
     finally:
         con.close()
-    assert len(rep.written) == 9 and not rep.skipped
+    assert len(rep.written) == 13 and not rep.skipped
 
     with zipfile.ZipFile(out) as zf:
         names = set(zf.namelist())
@@ -98,18 +118,22 @@ def test_collects_every_agent_into_the_upload_layout(tmp_path):
         assert "laptop/alice/openclaw/agents/work/sessions/old.jsonl" in names
         assert zf.comment.startswith(b"synthsift-collect")
         manifest = list(csv.DictReader(io.StringIO(zf.read(sc.MANIFEST).decode())))
-    assert len(manifest) == 9 and all(len(r["sha256"]) == 64 for r in manifest)
+    assert len(manifest) == 13 and all(len(r["sha256"]) == 64 for r in manifest)
     methods = {r["zip_path"].rsplit("/", 1)[-1]: r["method"] for r in manifest}
     assert methods["openclaw-agent.sqlite"] == "sqlite-backup" and methods["state.db"] == "sqlite-backup"
 
     rep = read_zip(out.read_bytes(), "c")
-    assert {(c.host, c.user, c.harness) for c in rep.conversations} == {("laptop", "alice", "claude_code"),
-                                                                        ("laptop", "alice", "openclaw")}
+    assert {(c.host, c.user, c.harness) for c in rep.conversations} == {
+        ("laptop", "alice", h) for h in ("claude_code", "openclaw", "gemini", "antigravity")}
+    gemini = sorted((c.meta.get("subagent", False), c.meta.get("cwd")) for c in rep.conversations if c.harness == "gemini")
+    assert gemini == [(False, "/home/alice/proj"), (True, "/home/alice/proj")]
+    [ag] = [c for c in rep.conversations if c.harness == "antigravity"]
+    assert ag.meta["cwd"] == "/home/alice/proj" and ag.meta["app"] == "Antigravity CLI"
     # the database snapshot includes rows that were only in the write-ahead log
     assert sum(1 for c in rep.conversations if c.meta.get("channel") == "telegram") == 1
     assert sum(1 for c in rep.conversations if c.meta.get("archive") == "deleted") >= 2
-    # placeholder parsers: kept in the zip, skipped with a warning
-    assert all("placeholder" in w for w in rep.warnings) and len(rep.warnings) == 2
+    # the placeholder parser: kept in the zip, skipped with a warning
+    assert all("placeholder" in w for w in rep.warnings) and len(rep.warnings) == 1
 
 
 def test_environment_overrides_and_deduplication(tmp_path):
@@ -186,7 +210,11 @@ def test_targets_in_non_default_locations(tmp_path):
     assert ("openclaw", owner, "a/old.jsonl") in {(m.agent, m.user, m.rel) for m in got}  # the lock file is excluded
     assert not any(m.rel.endswith((".txt", ".lock")) for m in got)
     # a bare folder is a home directory: every agent's usual locations, filed under the folder's name
-    assert {m.agent for m in got if m.user == "alice"} == {"claude_code", "openclaw", "gemini", "hermes"}
+    assert {m.agent for m in got if m.user == "alice"} == {"claude_code", "openclaw", "gemini", "antigravity", "hermes"}
+    # a target folder is walked, hidden folders included (Antigravity keeps its transcripts in .system_generated)
+    ag = sc.find(rules, [], env={}, dirs=[(owner, "antigravity", home / ".gemini" / "antigravity-cli")])
+    assert sorted(m.rel for m in ag) == [
+        "brain/0c1d2e3f-aaaa-bbbb-cccc-111122223333/.system_generated/logs/transcript.jsonl", "history.jsonl"]
     # the same file reached as a target and through a home is collected once
     twice = sc.find(rules, who, env={}, dirs=[("alice", "claude_code", home / ".claude")])
     assert len([m for m in twice if m.path.name == "s-1.jsonl"]) == 1

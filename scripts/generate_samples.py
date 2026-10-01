@@ -834,6 +834,374 @@ def openclaw_sqlite() -> bytes:
         return path.read_bytes()
 
 
+# ------------------------------------------------------------- Gemini CLI
+class GeminiSession:
+    """Builder for a Gemini CLI session file: a metadata row, then message rows appended (and re-appended
+    when they change), as ChatRecordingService writes them."""
+
+    def __init__(self, sid: str, project: str, start: str, kind: str = "main", directories: list[str] | None = None):
+        self.sid, self.t = sid, datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
+        self.rows: list[dict] = [{"sessionId": sid, "projectHash": project, "startTime": self._ts(0),
+                                  "lastUpdated": self._ts(0), "kind": kind,
+                                  **({"directories": directories} if directories else {})}]
+        self.n = 0
+
+    def _ts(self, secs: float = 6) -> str:
+        self.t += timedelta(seconds=secs)
+        return self.t.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    def _id(self) -> str:
+        self.n += 1
+        return f"{self.sid[:8]}-m{self.n:03d}"
+
+    def msg(self, typ: str, content, secs: float = 6, **extra) -> dict:
+        row = {"id": self._id(), "timestamp": self._ts(secs), "type": typ, "content": content, **extra}
+        self.rows.append(row)
+        return row
+
+    def user(self, text: str, secs: float = 50, refs: dict[str, str] | None = None) -> dict:
+        parts = [{"text": text}]
+        if refs:  # an @path reference: the CLI appends the files' contents to the prompt
+            parts.append({"text": "\n--- Content from referenced files ---"})
+            for path, body in refs.items():
+                parts += [{"text": f"\nContent from @{path}:\n"}, {"text": body}]
+            parts.append({"text": "\n--- End of content ---"})
+        return self.msg("user", parts, secs, **({"displayContent": [{"text": text}]} if refs else {}))
+
+    def gemini(self, text: str = "", thoughts: tuple[tuple[str, str], ...] = (), model: str = "gemini-3-pro-preview") -> dict:
+        row = self.msg("gemini", text, 8, thoughts=[{"subject": s, "description": d, "timestamp": self.rows[-1]["timestamp"]}
+                                                    for s, d in thoughts], tokens=None, model=model)
+        self.rows.append({"$set": {"lastUpdated": row["timestamp"]}})
+        return row
+
+    def tools(self, row: dict, *calls: tuple[str, dict, str, str]) -> "GeminiSession":
+        """Tool calls finish later: the gemini row is appended again with them and their results, and the
+        results are recorded once more as a user row of functionResponse parts."""
+        recs, responses = [], []
+        for name, args, output, status in calls:
+            self.n += 1
+            cid = f"{name}-{int(self.t.timestamp() * 1000)}-{self.n}"
+            fr = {"id": cid, "name": name, "response": {"error": output} if status == "error" else {"output": output}}
+            recs.append({"id": cid, "name": name, "args": args, "result": [{"functionResponse": fr}], "status": status,
+                         "timestamp": self._ts(4), "displayName": name, "description": "", "renderOutputAsMarkdown": False})
+            responses.append({"functionResponse": fr})
+        row = {**row, "toolCalls": [*row.get("toolCalls", []), *recs],
+               "tokens": {"input": 9120, "output": 312, "cached": 4096, "thoughts": 188, "tool": 0, "total": 9620}}
+        self.rows.append(row)
+        self.msg("user", responses, 1)
+        return self
+
+    def set(self, **fields) -> "GeminiSession":
+        self.rows.append({"$set": fields})
+        return self
+
+    def rewind(self, row: dict) -> "GeminiSession":
+        self.rows.append({"$rewindTo": row["id"]})
+        return self
+
+    def jsonl(self) -> str:
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in self.rows)
+
+
+GEM_PROJECT = "/home/lena/src/inventory-api"
+GEM_SID = "5d3a9c1e-7b2f-4e8a-9c6d-1f0e2d3c4b5a"
+GEM_SUB_SID = "0b7e4f21-c3d5-4a6b-8e9f-102132435465"
+
+
+def gemini_session_context(project: str) -> str:
+    return ("<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\n"
+            "Today's date is Wednesday, July 8, 2026 (formatted according to the user's locale).\n"
+            "My operating system is: linux\nThe project's temporary directory is: /home/lena/.gemini/tmp/inventory-api\n"
+            f"- **Workspace Directories:**\n  - {project}\n- **Directory Structure:**\n\n"
+            f"{project}/\n├───app/\n│   ├───config.py\n│   └───routes.py\n├───tests/\n└───requirements.txt\n</session_context>")
+
+
+def gemini_rate_limit() -> str:
+    """A current-format Gemini CLI session: @file reference, thoughts, a sub-agent, edits, a failed call,
+    "!" shell mode, a rewind and a generated summary."""
+    s = GeminiSession(GEM_SID, "inventory-api", "2026-07-08T09:12:00")
+    s.msg("user", [{"text": gemini_session_context(GEM_PROJECT)}], 1)
+    s.user("Add per-client rate limiting to the /orders endpoint in @app/routes.py. Use Redis – the dev instance "
+           "runs at redis.inventory.test:6379.",
+           refs={"app/routes.py": "from flask import Blueprint, jsonify, request\nfrom .db import orders\n\n"
+                                  "bp = Blueprint('orders', __name__)\n\n@bp.get('/orders')\ndef list_orders():\n"
+                                  "    return jsonify(orders.recent(limit=int(request.args.get('limit', 50))))\n"})
+    g = s.gemini("I'll get an overview of how the app is wired before changing the route.",
+                 (("Mapping the codebase", "I need to know where the Flask app and its configuration are created "
+                                           "before adding middleware."),))
+    s.tools(g, ("invoke_agent", {"agent_name": "codebase_investigator",
+                                 "prompt": "Find where the Flask app is created, how configuration is loaded and "
+                                           "whether Redis is already used anywhere."},
+                "The app factory is app/__init__.py:create_app(); settings come from app/config.py, which reads "
+                "environment variables with defaults. Redis is not used yet; requirements.txt has no redis client.",
+                "success"))
+    g = s.gemini("Configuration lives in app/config.py; let me read it and the local environment file.",
+                 (("Checking configuration", "The limiter needs the Redis URL; check config.py and .env for it."),))
+    s.tools(g, ("read_file", {"file_path": f"{GEM_PROJECT}/app/config.py"},
+                "import os\n\nDATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///inventory.db')\n"
+                "REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis.inventory.test:6379/0')\n", "success"),
+            ("read_file", {"file_path": f"{GEM_PROJECT}/.env"},
+                "DATABASE_URL=postgresql://inventory@db.inventory.test/inventory\n"
+                "REDIS_PASSWORD=example-secret-not-a-real-key\n", "success"))
+    g = s.gemini("I'll add a small fixed-window limiter and apply it to the route.",
+                 (("Designing the limiter", "A fixed window keyed by client IP is enough here: INCR plus EXPIRE "
+                                            "in one pipeline."),))
+    s.tools(g, ("write_file", {"file_path": f"{GEM_PROJECT}/app/ratelimit.py",
+                               "content": "import functools\nimport redis\nfrom flask import abort, request\n"
+                                          "from .config import REDIS_URL\n\n_r = redis.Redis.from_url(REDIS_URL)\n\n"
+                                          "def limit(per_minute: int):\n    def wrap(fn):\n        @functools.wraps(fn)\n"
+                                          "        def inner(*a, **kw):\n            key = f'rl:{request.remote_addr}:{fn.__name__}'\n"
+                                          "            n, _ = _r.pipeline().incr(key).expire(key, 60).execute()\n"
+                                          "            if n > per_minute:\n                abort(429)\n"
+                                          "            return fn(*a, **kw)\n        return inner\n    return wrap\n"},
+                "Successfully created and wrote to new file: " + f"{GEM_PROJECT}/app/ratelimit.py.", "success"),
+            ("replace", {"file_path": f"{GEM_PROJECT}/app/routes.py", "instruction": "Rate limit the /orders route",
+                         "old_string": "@bp.get('/orders')\ndef list_orders():",
+                         "new_string": "@bp.get('/orders')\n@limit(per_minute=60)\ndef list_orders():"},
+                "Successfully modified file: " + f"{GEM_PROJECT}/app/routes.py (1 replacements).", "success"))
+    g = s.gemini("Now the tests.")
+    s.tools(g, ("run_shell_command", {"command": "pip install 'redis==5.0.4' && pytest -q tests/test_orders.py",
+                                      "description": "Install the Redis client and run the order tests"},
+                "Successfully installed redis-5.0.4\n...\n3 passed in 0.62s", "success"),
+            ("run_shell_command", {"command": "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/orders",
+                                   "description": "Check the endpoint on the local server"},
+                "Command exited with code 7: curl: (7) Failed to connect to localhost port 8000: Connection refused",
+                "error"))
+    s.gemini("The tests pass. The live check failed because the dev server isn't running; start it with "
+             "`flask --app app run --port 8000` if you want to try it by hand.")
+    s.msg("user", [{"text": "I ran the following shell command:\n```sh\ngit diff --stat\n```\n\n"
+                            "This produced the following result:\n```\n app/ratelimit.py | 18 ++++++++++++++++++\n"
+                            " app/routes.py    |  1 +\n 2 files changed, 19 insertions(+)\n```"}], 40)
+    wrong = s.user("Actually, drop Redis and keep the counters in memory.")
+    s.gemini("Switching to an in-memory dictionary keyed by client IP.",
+             (("Reconsidering", "An in-memory limiter only works with a single worker."),))
+    s.rewind(wrong)
+    s.msg("info", "Rewound the conversation to before your last message.", 2)
+    s.user("Keep Redis, but also send an X-RateLimit-Remaining header.")
+    g = s.gemini("I'll return the remaining budget from the decorator and set the header on the response.")
+    s.tools(g, ("replace", {"file_path": f"{GEM_PROJECT}/app/ratelimit.py", "instruction": "Expose the remaining budget",
+                            "old_string": "            return fn(*a, **kw)",
+                            "new_string": "            resp = make_response(fn(*a, **kw))\n"
+                                          "            resp.headers['X-RateLimit-Remaining'] = str(max(per_minute - n, 0))\n"
+                                          "            return resp"},
+                "Successfully modified file: " + f"{GEM_PROJECT}/app/ratelimit.py (1 replacements).", "success"))
+    s.gemini("Done: /orders is limited to 60 requests a minute per client and reports the remaining budget "
+             "in X-RateLimit-Remaining.")
+    s.msg("warning", "This session is approaching the model's context limit; older turns may be compressed.", 3)
+    s.set(summary="Redis rate limiting for the /orders endpoint")
+    return s.jsonl()
+
+
+def gemini_investigator() -> str:
+    """The codebase_investigator sub-agent the session above started (its own file, under the parent's id)."""
+    s = GeminiSession(GEM_SUB_SID, "inventory-api", "2026-07-08T09:13:10", kind="subagent", directories=[GEM_PROJECT])
+    s.user("Find where the Flask app is created, how configuration is loaded and whether Redis is already used anywhere.", 1)
+    g = s.gemini("", (("Locating the app factory", "Search for create_app and Flask( first."),), model="gemini-3-flash-preview")
+    s.tools(g, ("grep_search", {"pattern": "create_app|Flask\\(", "dir_path": GEM_PROJECT},
+                "Found 2 matches\n---\nFile: app/__init__.py\nL3: def create_app():\nL4:     app = Flask(__name__)\n---",
+                "success"),
+            ("glob", {"pattern": "**/requirements*.txt"}, f"{GEM_PROJECT}/requirements.txt", "success"))
+    g = s.gemini("", model="gemini-3-flash-preview")
+    s.tools(g, ("read_file", {"file_path": f"{GEM_PROJECT}/requirements.txt"}, "flask==3.1.0\npsycopg==3.2.1\n", "success"))
+    g = s.gemini("", model="gemini-3-flash-preview")
+    s.tools(g, ("complete_task", {"result": "create_app() in app/__init__.py; config from env vars in app/config.py; "
+                                            "no Redis client installed or imported."}, "Task completed.", "success"))
+    return s.jsonl()
+
+
+def gemini_checkpoint() -> dict:
+    """A chat saved with /resume save before-migration: the raw API history, no timestamps."""
+    return {"history": [
+        {"role": "user", "parts": [{"text": gemini_session_context(GEM_PROJECT)}]},
+        {"role": "model", "parts": [{"text": "Got it. Thanks for the context!"}]},
+        {"role": "user", "parts": [{"text": "Plan how we'd move the orders table from SQLite to Postgres without downtime."}]},
+        {"role": "model", "parts": [{"text": "**Reviewing the schema**\n\nStart from the current table definition.", "thought": True},
+                                    {"functionCall": {"name": "read_file", "args": {"file_path": f"{GEM_PROJECT}/db/schema.sql"}}}]},
+        {"role": "user", "parts": [{"functionResponse": {"name": "read_file", "response": {
+            "output": "CREATE TABLE orders (\n  id INTEGER PRIMARY KEY,\n  sku TEXT NOT NULL,\n  qty INTEGER NOT NULL,\n"
+                      "  created_at TEXT DEFAULT CURRENT_TIMESTAMP\n);"}}}]},
+        {"role": "model", "parts": [{"text": "1. Create the table in Postgres with the same columns (created_at as timestamptz).\n"
+                                             "2. Dual-write from the app for a release.\n3. Backfill old rows with a batch job.\n"
+                                             "4. Switch reads, then stop writing to SQLite."}]},
+    ], "authType": "oauth-personal"}
+
+
+def gemini_legacy_backup() -> dict:
+    """An older (.json, one object) session from a project kept under its path hash."""
+    calls = [
+        {"id": "write_file-1763647440512-a1", "name": "write_file",
+         "args": {"file_path": "/home/lena/bin/photo-backup.sh",
+                  "content": "#!/bin/sh\nset -eu\nrsync -a --delete \"$HOME/Pictures/\" backup@192.0.2.40:/volume1/photos/\n"},
+         "result": [{"functionResponse": {"id": "write_file-1763647440512-a1", "name": "write_file",
+                                          "response": {"output": "Successfully created and wrote to new file: /home/lena/bin/photo-backup.sh."}}}],
+         "status": "success", "timestamp": "2025-11-20T14:04:02.000Z", "displayName": "WriteFile",
+         "description": "Writes content to a file.", "renderOutputAsMarkdown": False,
+         "resultDisplay": {"fileDiff": "+rsync -a --delete ...", "fileName": "photo-backup.sh"}},
+        {"id": "run_shell_command-1763647449000-a2", "name": "run_shell_command",
+         "args": {"command": "chmod +x ~/bin/photo-backup.sh && (crontab -l; echo '30 2 * * * ~/bin/photo-backup.sh') | crontab -",
+                  "description": "Make the script executable and run it nightly at 02:30"},
+         "result": [{"functionResponse": {"id": "run_shell_command-1763647449000-a2", "name": "run_shell_command",
+                                          "response": {"output": "Command: chmod +x ...\nStdout: (empty)\nExit Code: 0"}}}],
+         "status": "success", "timestamp": "2025-11-20T14:04:20.000Z", "displayName": "Shell",
+         "description": "Runs a shell command.", "renderOutputAsMarkdown": False},
+    ]
+    return {"sessionId": "77aa12bc-4d3e-4f50-9a81-b2c3d4e5f607",
+            "projectHash": "3b1f9e0c5d7a2468ace0fdb97531eca86420bdf13579ace02468bdf13579ace0",
+            "startTime": "2025-11-20T14:03:00.000Z", "lastUpdated": "2025-11-20T14:05:10.000Z",
+            "messages": [
+                {"id": "a1", "timestamp": "2025-11-20T14:03:10.000Z", "type": "user",
+                 "content": "Write a script that backs up ~/Pictures to the NAS at 192.0.2.40 every night."},
+                {"id": "a2", "timestamp": "2025-11-20T14:03:58.000Z", "type": "gemini",
+                 "content": "I'll write the script and schedule it with cron.", "toolCalls": calls,
+                 "thoughts": [{"subject": "Choosing the tool", "description": "rsync over SSH copies only what changed.",
+                               "timestamp": "2025-11-20T14:03:40.000Z"}],
+                 "tokens": {"input": 5210, "output": 140, "cached": 0, "thoughts": 96, "tool": 0, "total": 5446},
+                 "model": "gemini-2.5-pro"},
+                {"id": "a3", "timestamp": "2025-11-20T14:05:10.000Z", "type": "gemini",
+                 "content": "Done. The backup runs nightly at 02:30; it needs an SSH key for backup@192.0.2.40.",
+                 "thoughts": [], "tokens": {"input": 5600, "output": 40, "cached": 4096, "thoughts": 0, "tool": 0, "total": 5640},
+                 "model": "gemini-2.5-pro"}]}
+
+
+# ------------------------------------------------------------- Antigravity
+class AGTranscript:
+    """Builder for an Antigravity brain transcript (one JSON row per step)."""
+
+    def __init__(self, start: str):
+        self.t = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
+        self.rows: list[dict] = []
+
+    def step(self, source: str, typ: str, secs: float = 3, status: str = "DONE", **fields) -> "AGTranscript":
+        self.t += timedelta(seconds=secs)
+        self.rows.append({"step_index": len(self.rows), "source": source, "type": typ, "status": status,
+                          "created_at": self.t.isoformat().replace("+00:00", "Z"), **fields})
+        return self
+
+    def user(self, text: str, metadata: str = "", secs: float = 40) -> "AGTranscript":
+        body = f"<USER_REQUEST>\n{text}\n</USER_REQUEST>" + (f"\n<ADDITIONAL_METADATA>\n{metadata}\n</ADDITIONAL_METADATA>" if metadata else "")
+        self.step("USER_EXPLICIT", "USER_INPUT", secs, content=body)
+        return self.step("SYSTEM", "CONVERSATION_HISTORY", 1)
+
+    def plan(self, text: str = "", thinking: str = "", *calls: tuple[str, dict], secs: float = 5) -> "AGTranscript":
+        fields = {**({"content": text} if text else {}), **({"thinking": thinking} if thinking else {}),
+                  **({"tool_calls": [{"name": n, "args": a} for n, a in calls]} if calls else {})}
+        return self.step("MODEL", "PLANNER_RESPONSE", secs, **fields)
+
+    def result(self, typ: str, content: str, status: str = "DONE", secs: float = 2) -> "AGTranscript":
+        return self.step("MODEL", typ, secs, status, content=content)
+
+    def jsonl(self, truncate: int | None = None) -> str:
+        """``truncate``: the token-efficient transcript.jsonl, with long contents cut."""
+        rows = self.rows
+        if truncate:
+            rows = [{**r, "content": r["content"][:truncate] + "…[truncated]"} if len(r.get("content", "")) > truncate else r
+                    for r in rows]
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+
+
+AG_CLI_ID = "6f1e2d3c-4b5a-4968-8778-a9b0c1d2e3f4"
+AG_IDE_ID = "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d"
+AG_LEDGER = "/Users/noor/code/ledger"
+AG_SITE = "/Users/noor/code/studio-site"
+
+
+def antigravity_cli_ledger() -> AGTranscript:
+    """An agy CLI conversation: find and fix a CSV export bug, then a publish step the index refuses."""
+    t = AGTranscript("2026-07-14T16:20:00")
+    t.user("The CSV export drops rows whose memo contains a comma. Find out why and fix it.",
+           "The current local time is 2026-07-14T18:20:00+02:00.\nWorkspace: " + AG_LEDGER)
+    t.plan("", "Find the export code first.", ("grep_search", {"Query": "def export_csv", "SearchPath": AG_LEDGER,
+                                                                "toolAction": "Searching", "toolSummary": "export_csv"}))
+    t.result("GREP_SEARCH", "ledger/export.py:12: def export_csv(entries, path):")
+    t.plan("", "", ("view_file", {"AbsolutePath": f"{AG_LEDGER}/ledger/export.py", "StartLine": 1, "EndLine": 30,
+                                  "toolAction": "Viewing", "toolSummary": "export.py"}))
+    t.result("VIEW_FILE", "import csv\n\n\ndef export_csv(entries, path):\n    with open(path, 'w') as f:\n"
+                          "        for e in entries:\n            f.write(','.join([e.date, e.memo, str(e.amount)]) + '\\n')\n")
+    t.plan("The export joins fields with commas by hand instead of using the csv module, so a memo with a comma "
+           "becomes an extra column and the importer drops the row. I'll switch to csv.writer.",
+           "Hand-built CSV with no quoting: use csv.writer, which quotes fields that contain the delimiter.",
+           ("replace_file_content", {"TargetFile": f"{AG_LEDGER}/ledger/export.py",
+                                     "ReplacementChunks": [{"TargetContent": "        for e in entries:\n            f.write(','.join([e.date, e.memo, str(e.amount)]) + '\\n')",
+                                                            "ReplacementContent": "        w = csv.writer(f)\n        for e in entries:\n            w.writerow([e.date, e.memo, e.amount])"}],
+                                     "toolAction": "Editing", "toolSummary": "export.py"}))
+    t.result("CODE_ACTION", "@@ -5,3 +5,4 @@\n-        for e in entries:\n-            f.write(','.join([e.date, e.memo, str(e.amount)]) + '\\n')\n"
+                            "+        w = csv.writer(f)\n+        for e in entries:\n+            w.writerow([e.date, e.memo, e.amount])")
+    t.plan("", "", ("run_command", {"CommandLine": "python -m pytest tests/test_export.py -q", "Cwd": AG_LEDGER,
+                                    "WaitMsBeforeAsync": 5000, "SafeToAutoRun": True, "toolAction": "Running",
+                                    "toolSummary": "pytest"}))
+    t.result("RUN_COMMAND", "....\n4 passed in 0.21s", secs=6)
+    t.plan("Fixed: `export_csv` now writes rows with `csv.writer`, which quotes memos that contain commas. "
+           "The export tests pass.")
+    t.user("Great – build it and publish 1.4.1 to our internal package index.")
+    t.plan("", "Build the wheel, then upload with twine to the internal index.",
+           ("run_command", {"CommandLine": "python -m build && twine upload --repository-url https://pypi.ledger.test/simple/ dist/*",
+                            "Cwd": AG_LEDGER, "SafeToAutoRun": False, "toolAction": "Running", "toolSummary": "twine upload"}))
+    t.result("RUN_COMMAND", "Successfully built ledger-1.4.1.tar.gz and ledger-1.4.1-py3-none-any.whl\n"
+                            "Uploading distributions to https://pypi.ledger.test/simple/\n"
+                            "ERROR    HTTPError: 403 Forbidden from https://pypi.ledger.test/simple/\n         Invalid or non-existent authentication information.",
+             status="ERROR", secs=9)
+    t.plan("The build worked but the upload was refused (403): twine has no credentials for pypi.ledger.test. "
+           "Add an entry for it to ~/.pypirc or set TWINE_USERNAME / TWINE_PASSWORD, then run the upload again.")
+    return t
+
+
+def antigravity_cli_history() -> str:
+    rows = [{"display": "The CSV export drops rows whose memo contains a comma. Find out why and fix it.",
+             "timestamp": 1784046000000, "workspace": f"file://{AG_LEDGER}", "conversationId": AG_CLI_ID},
+            {"display": "Great – build it and publish 1.4.1 to our internal package index.",
+             "timestamp": 1784046180000, "workspace": f"file://{AG_LEDGER}", "conversationId": AG_CLI_ID}]
+    return "".join(json.dumps(r) + "\n" for r in rows)
+
+
+def antigravity_ide_site() -> str:
+    """An Antigravity IDE conversation: a web search, a browser sub-agent and an edit, as the IDE's transcript."""
+    t = AGTranscript("2026-07-15T10:02:00")
+    t.user("The hero section on the landing page overflows on phones. Make it responsive.",
+           f"Active Document: {AG_SITE}/src/components/Hero.tsx\nCursor is on line 14")
+    t.plan("", "Look at the component, then check the page at a phone width.",
+           ("view_file", {"AbsolutePath": f"{AG_SITE}/src/components/Hero.tsx", "toolAction": "Viewing", "toolSummary": "Hero.tsx"}))
+    t.result("VIEW_FILE", "export function Hero() {\n  return (\n    <section style={{ width: 1200, padding: 64 }}>\n"
+                          "      <h1 className=\"text-6xl\">Studio Noor</h1>\n    </section>\n  );\n}\n")
+    t.plan("", "", ("search_web", {"query": "tailwind responsive font size clamp hero heading", "toolAction": "Searching the web"}))
+    t.result("SEARCH_WEB", "Results: Tailwind supports responsive prefixes (sm:, md:, lg:) and arbitrary values such as "
+                           "text-[clamp(2rem,6vw,4rem)] (docs.tailwind.example/responsive-design).")
+    t.plan("", "The fixed 1200px width causes the overflow; use max-w and responsive text sizes.",
+           ("write_to_file", {"TargetFile": f"{AG_SITE}/src/components/Hero.tsx", "Overwrite": True,
+                              "CodeContent": "export function Hero() {\n  return (\n    <section className=\"mx-auto w-full max-w-5xl px-4 py-12 md:p-16\">\n"
+                                             "      <h1 className=\"text-4xl md:text-6xl\">Studio Noor</h1>\n    </section>\n  );\n}\n",
+                              "toolAction": "Editing", "toolSummary": "Hero.tsx"}))
+    t.result("CODE_ACTION", "Wrote 7 lines to src/components/Hero.tsx")
+    t.plan("", "", ("browser_subagent", {"TaskName": "Check the hero at phone width",
+                                         "Task": "Open http://localhost:5173 at 390x844, screenshot the hero and report any horizontal scroll."}))
+    t.result("BROWSER_SUBAGENT", "Opened http://localhost:5173 at 390x844. The hero fits the viewport; no horizontal scroll. "
+                                 "Screenshot saved to hero-mobile.png.", secs=20)
+    t.plan("The hero now uses `max-w-5xl` with responsive padding and heading sizes, and the browser check at "
+           "390×844 shows no horizontal scroll.")
+    return t.jsonl()
+
+
+def antigravity_export() -> list:
+    """A conversation exported from the IDE's local API (GetCascadeTrajectorySteps): CORTEX_STEP_TYPE_* steps."""
+    def st(typ: str, ts: str, **body) -> dict:
+        return {"type": f"CORTEX_STEP_TYPE_{typ}", "status": "CORTEX_STEP_STATUS_DONE", "metadata": {"createdAt": ts}, **body}
+    return [
+        st("USER_INPUT", "2026-07-16T08:30:00Z", userInput={"items": [{"item": {"text": "Why is the nightly report job slow? It runs reports/nightly.py."}}]}),
+        st("PLANNER_RESPONSE", "2026-07-16T08:30:06Z", plannerResponse={
+            "thinking": "Profile the job before guessing.", "response": "",
+            "toolCalls": [{"id": "toolu_ag_01", "name": "run_command",
+                           "argumentsJson": json.dumps({"CommandLine": "python -m cProfile -s cumtime reports/nightly.py | head -n 12",
+                                                        "Cwd": "/Users/noor/code/reports"})}]}),
+        {**st("RUN_COMMAND", "2026-07-16T08:31:40Z", runCommand={
+            "commandLine": "python -m cProfile -s cumtime reports/nightly.py | head -n 12", "cwd": "/Users/noor/code/reports",
+            "combinedOutput": {"full": "   ncalls  tottime  cumtime  filename:lineno(function)\n"
+                                       "    14200    0.410   88.902  db.py:40(fetch_customer)\n"
+                                       "        1    0.002   91.317  nightly.py:9(main)"}, "exitCode": 0}),
+         "metadata": {"createdAt": "2026-07-16T08:31:40Z", "executionId": "toolu_ag_01"}},
+        st("PLANNER_RESPONSE", "2026-07-16T08:31:48Z", plannerResponse={
+            "response": "Almost all of the 91 s is `fetch_customer`, called 14,200 times – one query per row. "
+                        "Loading the customers once with a single `IN (...)` query should bring the job to a few seconds."}),
+    ]
+
 # --------------------------------------------------------------------------
 FILES: dict[str, object] = {
     "laptop-ana/ana/example/transcript1-garlic-bread.json": garlic_bread,
@@ -855,6 +1223,19 @@ FILES: dict[str, object] = {
         claude_code_deploy_debug,
     "home-server/max/openclaw/agents/main/agent/openclaw-agent.sqlite": openclaw_sqlite,
     "home-server/max/openclaw/agents/main/sessions/41c2a7d9-0b8e-4f3a-9d6c-5e4f3a2b1c0d.jsonl": lambda: openclaw_legacy().jsonl(),
+    "ws-lena/lena/gemini/tmp/inventory-api/.project_root": lambda: GEM_PROJECT + "\n",
+    "ws-lena/lena/gemini/tmp/inventory-api/chats/session-2026-07-08T09-12-5d3a9c1e.jsonl": gemini_rate_limit,
+    f"ws-lena/lena/gemini/tmp/inventory-api/chats/{GEM_SID}/{GEM_SUB_SID}.jsonl": gemini_investigator,
+    "ws-lena/lena/gemini/tmp/inventory-api/checkpoint-before-migration.json": gemini_checkpoint,
+    "ws-lena/lena/gemini/tmp/3b1f9e0c5d7a2468ace0fdb97531eca86420bdf13579ace02468bdf13579ace0/chats/"
+    "session-2025-11-20T14-03-77aa12bc.json": gemini_legacy_backup,
+    "studio-mac/noor/antigravity/antigravity-cli/history.jsonl": antigravity_cli_history,
+    f"studio-mac/noor/antigravity/antigravity-cli/brain/{AG_CLI_ID}/.system_generated/logs/transcript_full.jsonl":
+        lambda: antigravity_cli_ledger().jsonl(),
+    f"studio-mac/noor/antigravity/antigravity-cli/brain/{AG_CLI_ID}/.system_generated/logs/transcript.jsonl":
+        lambda: antigravity_cli_ledger().jsonl(truncate=120),
+    f"studio-mac/noor/antigravity/antigravity/brain/{AG_IDE_ID}/.system_generated/logs/transcript.jsonl": antigravity_ide_site,
+    "studio-mac/noor/antigravity/exports/nightly-report-profiling.json": antigravity_export,
 }
 
 

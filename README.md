@@ -89,8 +89,8 @@ which folder to put them in inside the upload zip (`<host>/<user>/<folder>/…`)
 | [Claude Code](#claude-code) | `claude_code` | ready | `~/.claude/projects/` |
 | [OpenClaw](#openclaw) | `openclaw` | ready | `~/.openclaw/agents/` |
 | [Generic chat logs](#generic-chat-logs-example) | `example` | ready | your own API / proxy logs |
-| [Gemini CLI](#gemini-cli) | `gemini` | placeholder | `~/.gemini/tmp/<project_hash>/chats/` |
-| [Google Antigravity](#google-antigravity) | `antigravity` | placeholder | not documented (see below) |
+| [Gemini CLI](#gemini-cli) | `gemini` | ready | `~/.gemini/tmp/<project>/` |
+| [Google Antigravity](#google-antigravity) | `antigravity` | ready | `~/.gemini/antigravity*/brain/` |
 | [Hermes Agent](#hermes-agent) | `hermes` | placeholder | `~/.hermes/state.db` |
 
 Files in a *placeholder* folder are accepted but skipped with a warning until
@@ -114,9 +114,10 @@ What it looks for is listed per agent in plain text glob files,
 cover another agent. See [collector/README.md](collector/README.md).
 
 Copying files by hand works too. You can also zip an agent's hidden state
-folder (`.claude/`, `.openclaw/`) as it is: it is recognised even without the
-`host/user` folders, and the user is then taken from the session's working
-directory.
+folder (`.claude/`, `.openclaw/`, `.gemini/`) as it is: it is recognised even
+without the `host/user` folders, and the user is then taken from the session's
+working directory. Gemini CLI and Antigravity share `~/.gemini/`; each file goes
+to the right parser by where it sits.
 
 ### Claude Code
 
@@ -197,9 +198,9 @@ needed.
 never written to disk and can't be recovered.
 
 **Zip path**: `<host>/<user>/openclaw/agents/<agentId>/agent/openclaw-agent.sqlite` (and
+`…/sessions/…`)
 
 **Glob list**: [`collector/globs/openclaw.txt`](collector/globs/openclaw.txt)
-`…/sessions/…`)
 
 **What is read**
 - User, assistant (text, thinking, tool calls) and tool-result events.
@@ -231,44 +232,93 @@ too.
 
 ### Gemini CLI
 
-*Parser not written yet.*
-
 **Where**
 
 | OS | Path |
 |---|---|
-| macOS / Linux | `~/.gemini/tmp/<project_hash>/chats/session-<time>-<id>.jsonl` (`.json` in older releases) |
-| Windows | `C:\Users\<you>\.gemini\tmp\<project_hash>\chats\` |
-| Custom | `$GEMINI_CLI_HOME/.gemini/…` when `GEMINI_CLI_HOME` is set |
+| macOS / Linux | `~/.gemini/tmp/<project>/` |
+| Windows | `C:\Users\<you>\.gemini\tmp\<project>\` |
+| Custom | `$GEMINI_CLI_HOME/.gemini/tmp/<project>/` when `GEMINI_CLI_HOME` is set |
 
-Manually saved chats (`/resume save <tag>`) are kept in
-`~/.gemini/tmp/<project_hash>/`.
+`<project>` is a short name for the project folder, e.g. `inventory-api`
+(older releases used a SHA-256 of the folder's path).
+
+**What to copy**, per project
+- `chats/session-<time>-<id>.jsonl`: one file per session (`.json` in releases
+  before mid-2026).
+- `chats/<session id>/<id>.jsonl`: the sub-agents a session started.
+- `checkpoint-<tag>.json`: chats saved with `/resume save <tag>`.
+- `.project_root`: the project folder's path, which becomes the sessions'
+  working directory.
 
 **Retention**: sessions are deleted after **30 days** by default
 (`general.sessionRetention.maxAge` in `settings.json`).
 
-**Zip path**: `<host>/<user>/gemini/tmp/<project_hash>/chats/…`
+**Zip path**: `<host>/<user>/gemini/tmp/<project>/chats/session-….jsonl`
 
 **Glob list**: [`collector/globs/gemini.txt`](collector/globs/gemini.txt)
 
+**What is read**
+- Prompts, replies, thoughts, and tool calls with their results. A message the
+  CLI rewrote as it went (tool calls and token counts arrive later) is read
+  once, in its final form.
+- Nothing that happened is lost:
+  - a rewind leaves the rewound turns in place and adds a *system* note where
+    it happened;
+  - tool output the CLI later masked or compressed keeps its original text.
+- Each sub-agent and each saved checkpoint is its own conversation.
+- The CLI's own context becomes *system* messages: the `<session_context>`
+  preamble, `<hook_context>`, and the contents of files an `@path` reference
+  pulled into a prompt.
+- `!` shell-mode commands the user ran become `user_shell` tool calls, so they
+  are security-scanned.
+- `info` / `warning` / `error` notices become *system* messages.
+- Metadata: the session's generated summary as its title, working directory,
+  session id, model and, for sub-agents, the parent session.
+
 ### Google Antigravity
 
-*Parser not written yet.*
+**Where**: Antigravity keeps one folder per conversation under `brain/`.
 
-**Where**: Google does not document where the Antigravity IDE keeps its
-conversations, so there is no confirmed path to collect yet. What is
-documented:
-- The Antigravity CLI keeps its configuration in `~/.gemini/antigravity-cli/`.
-- For scripted runs, headless mode prints the whole run as NDJSON (`init`,
-  `step_update` and `result` events), which is the most reliable capture today:
+| App | Folder (macOS / Linux; Windows: `%USERPROFILE%\.gemini\…`) |
+|---|---|
+| IDE | `~/.gemini/antigravity/` (`~/.gemini/antigravity-ide/` in newer builds) |
+| CLI (`agy`) | `~/.gemini/antigravity-cli/` |
 
-```bash
-agy -p "…" --output-format stream-json > <host>/<user>/antigravity/run-001.jsonl
-```
+**What to copy**
+- `brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`: the
+  plaintext transcript, every step in full.
+- `transcript.jsonl` (large outputs truncated) and `overview.txt` beside it
+  hold the same steps. When an upload has more than one, only the fullest is
+  read.
+- `history.jsonl` (CLI only): the prompt log, which names each conversation's
+  workspace.
 
-**Zip folder**: `antigravity`
+**Not readable**: the agent's own store, `conversations/<id>.pb`, is
+AES-encrypted, and `conversations/<id>.db` holds protobuf in an unpublished
+schema. The brain transcript carries the same conversation in plain text.
+
+**Exports**: conversations fetched from the IDE's local language-server API
+(`GetCascadeTrajectory`), or saved by export tools built on it, are JSON
+`steps` typed `CORTEX_STEP_TYPE_*`. Put them anywhere in the `antigravity`
+folder. They carry tool results in full: command output, file contents and
+edit diffs.
+
+**Zip path**: `<host>/<user>/antigravity/antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl`
 
 **Glob list**: [`collector/globs/antigravity.txt`](collector/globs/antigravity.txt)
+
+**What is read**
+- Prompts, replies, reasoning and tool calls.
+- Tool results are the steps named after a tool (`RUN_COMMAND`, `VIEW_FILE`,
+  `SEARCH_WEB`, …) that follow a call. They are matched to the open calls by
+  tool name.
+- `<ADDITIONAL_METADATA>` and other tagged context around a prompt become
+  *system* messages.
+- The UI hints on every call (`toolAction`, `toolSummary`) are dropped.
+- Metadata: conversation id, app (IDE or CLI) and workspace. The workspace
+  comes from the CLI's prompt log, or else from the first directory a tool
+  call names.
 
 ### Hermes Agent
 
@@ -779,18 +829,23 @@ class MyAgentParser(HarnessParser):
 
 `example.py` is the simplest complete implementation. It also reads OpenAI
 chat-completions logs and Anthropic Messages logs, so it's a good base to copy.
-`claude_code.py` (JSONL rows) and `openclaw.py` (JSONL events, zstd archives
-and SQLite) are full real-world parsers. Their module docstrings describe each
-native format.
+`claude_code.py` (JSONL rows), `openclaw.py` (JSONL events, zstd archives and
+SQLite), `gemini.py` (an append-only log replayed into messages) and
+`antigravity.py` (step transcripts and API trajectories) are full real-world
+parsers. Their module docstrings describe each native format.
 
-`gemini.py`, `antigravity.py` and `hermes.py` are registered placeholders:
-files in those folders are skipped with a warning until the parser is written.
+`hermes.py` is a registered placeholder: files in its folder are skipped with
+a warning until the parser is written.
 
 The base class also gives parsers:
 - `read_jsonl()`: tolerant of a cut-off last line.
 - `decompress()`: for `.zst` and `.gz` files.
 - `iso_time()`: converts epoch seconds or milliseconds to ISO time.
-- `self.companions`: sibling files from the upload, such as a SQLite `-wal`.
+- `self.companions`: other files from the upload, such as a SQLite `-wal`.
+  Override `companion_paths()` to name others (Gemini CLI reads
+  `.project_root`, Antigravity the CLI's `history.jsonl`).
+- `superseded_by()`: skip a file when a fuller copy of it is in the upload.
+- `owns()`: claim files by the shape of their path, whatever folder holds them.
 - `self.warnings`: for messages shown to the user.
 
 ### The example format

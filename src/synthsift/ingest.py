@@ -11,20 +11,23 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from .harnesses import ParserNotImplemented, get_parser, sniff_parser
+from .harnesses import ParserNotImplemented, extra_file_names, get_parser, hidden_folders, path_owner, sniff_parser
 from .models import Conversation
 
 TRANSCRIPT_EXTENSIONS = (".json", ".jsonl", ".ndjson", ".zst", ".gz", ".sqlite", ".db")
 # archived transcripts keep ".jsonl" mid-name, e.g. "<id>.jsonl.deleted.2026-01-01T10-00-00Z"
 _ARCHIVED = re.compile(r"\.jsonl\.[^/]+$", re.I)
+# half-written copies an agent renames into place (Gemini CLI: "<session>.jsonl.tmp-<pid>")
+_TEMP = re.compile(r"\.tmp-\d+$")
 _HOME = re.compile(r"^(?:/home|/Users|C:\\Users)[/\\]([^/\\]+)", re.I)
 
 
 def is_transcript_name(name: str) -> bool:
     low = name.lower()
-    if low.endswith((".lock", "-wal", "-shm", "-journal")):
+    if low.endswith((".lock", "-wal", "-shm", "-journal")) or _TEMP.search(low):
         return False
-    return low.endswith(TRANSCRIPT_EXTENSIONS) or bool(_ARCHIVED.search(low))
+    return (low.endswith(TRANSCRIPT_EXTENSIONS) or bool(_ARCHIVED.search(low))
+            or PurePosixPath(low).name in extra_file_names())
 
 
 @dataclass
@@ -41,29 +44,38 @@ def locate(path: str) -> tuple[str, str, str | None, str]:
     The expected layout is ``host/user/harness/file``; extra wrapper folders
     before it are ignored, and extra folders after the harness folder become
     part of the session name.  When no folder matches a registered harness the
-    positional layout is assumed and the harness is left to sniffing.
+    positional layout is assumed and the harness is left to sniffing.  A parser
+    that recognises the path's shape (:meth:`HarnessParser.owns`) takes the file
+    whatever folder it is in.
     """
     parts = [p for p in PurePosixPath(path).parts if p not in ("", ".")]
     filename = parts[-1]
     dirs = parts[:-1]
+    owner = path_owner(path)
     for i in range(len(dirs) - 1, -1, -1):
         if get_parser(dirs[i]) is not None:
+            # agent folders inside agent folders (antigravity/antigravity/…, .gemini/antigravity/…) are one place
+            while i > 0 and get_parser(dirs[i - 1]) is not None:
+                i -= 1
             host = dirs[i - 2] if i >= 2 else "unknown-host"
             user = dirs[i - 1] if i >= 1 else "unknown-user"
             session = "/".join([*dirs[i + 1:], filename])
-            return host, user, dirs[i], session
+            return host, user, owner.name if owner else dirs[i], session
     host = dirs[-3] if len(dirs) >= 3 else "unknown-host"
     user = dirs[-2] if len(dirs) >= 2 else "unknown-user"
-    harness = dirs[-1] if dirs else None
+    harness = owner.name if owner else dirs[-1] if dirs else None
     return host, user, harness, filename
 
 
 def _is_junk(name: str) -> bool:
     """Directories, macOS metadata and hidden files – except agent state folders
-    such as ``.claude`` or ``.openclaw`` that are hidden by design."""
+    such as ``.claude`` or ``.openclaw`` and the hidden folders a parser reads
+    (Antigravity's ``.system_generated``), which are hidden by design."""
     p = PurePosixPath(name)
+    keep = hidden_folders()
     return name.endswith("/") or any(
-        part == "__MACOSX" or (part.startswith(".") and get_parser(part) is None) for part in p.parts
+        part == "__MACOSX" or (part.startswith(".") and get_parser(part) is None and part not in keep)
+        for part in p.parts
     )
 
 
@@ -88,18 +100,23 @@ def read_zip(data: bytes, dataset: str) -> IngestReport:
             if not is_transcript_name(name):
                 report.skipped += 1
                 continue
+            host, user, folder, session = locate(name)
+            parser_cls = get_parser(folder) if folder else None
+            if parser_cls is not None and any(other in names for other in parser_cls.superseded_by(name)):
+                report.skipped += 1  # a fuller copy of the same conversation is in the upload
+                continue
             report.files += 1
             raw = zf.read(info)
-            host, user, folder, session = locate(name)
             filename = PurePosixPath(name).name
-            parser_cls = get_parser(folder) if folder else None
             if parser_cls is None:
                 parser_cls = sniff_parser(raw, filename)
                 if parser_cls is None:
                     report.warnings.append(f"{name}: unknown harness '{folder}' and format not recognised")
                     continue
             parser = parser_cls()
-            parser.companions = {sfx: zf.read(name + sfx) for sfx in ("-wal",) if name + sfx in names}
+            parser.source_path = name
+            parser.companions = {key: zf.read(path) for key, path in parser_cls.companion_paths(name).items()
+                                 if path in names}
             try:
                 convs = parser.parse(raw, filename)
             except ParserNotImplemented:

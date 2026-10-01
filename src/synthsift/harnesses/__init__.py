@@ -8,7 +8,10 @@ from .base import (  # noqa: F401
     HarnessParser,
     ParserNotImplemented,
     all_parsers,
+    extra_file_names,
     get_parser,
+    hidden_folders,
+    path_owner,
     register,
     sniff_parser,
 )

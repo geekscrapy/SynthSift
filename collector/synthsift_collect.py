@@ -206,8 +206,8 @@ def find(rules: List[Rules], who: List[Tuple[str, Path, bool]], env: Mapping[str
     out: List[Match] = []
     seen = set()  # (agent, real path): the same file reached twice (two patterns, a symlink, a target) is kept once
 
-    def take(r: Rules, user: str, base: str, pattern: str, source: str) -> None:
-        for hit in sorted(glob.glob(os.path.join(base, pattern), recursive=True)):
+    def take(r: Rules, user: str, base: str, hits: Iterable[str], source: str) -> None:
+        for hit in sorted(hits):
             path = Path(hit)
             if not path.is_file() or any(fnmatch.fnmatch(path.name, x) for x in r.excludes):
                 continue
@@ -223,12 +223,16 @@ def find(rules: List[Rules], who: List[Tuple[str, Path, bool]], env: Mapping[str
             for pattern in r.patterns:
                 spec = expand(pattern, home, env, current)
                 if spec is not None:
-                    take(r, user, *spec, pattern)
+                    base, rest = spec
+                    take(r, user, base, glob.glob(os.path.join(base, rest), recursive=True), pattern)
     by_agent = {r.agent: r for r in rules}
     for user, agent, folder in dirs:
         base = str(folder).rstrip("/\\") or "/"
-        for name in file_patterns(by_agent[agent]):
-            take(by_agent[agent], user, base, f"**/{name}", f"--target {agent}={folder}")
+        names = file_patterns(by_agent[agent])
+        # walk rather than glob "**": it also enters hidden folders (Antigravity's .system_generated)
+        hits = [os.path.join(d, f) for d, _, files in os.walk(base) for f in files
+                if any(fnmatch.fnmatch(f, n) for n in names)]
+        take(by_agent[agent], user, base, hits, f"--target {agent}={folder}")
     return out
 
 

@@ -1,0 +1,106 @@
+{
+  "sessionId": "77aa12bc-4d3e-4f50-9a81-b2c3d4e5f607",
+  "projectHash": "3b1f9e0c5d7a2468ace0fdb97531eca86420bdf13579ace02468bdf13579ace0",
+  "startTime": "2025-11-20T14:03:00.000Z",
+  "lastUpdated": "2025-11-20T14:05:10.000Z",
+  "messages": [
+    {
+      "id": "a1",
+      "timestamp": "2025-11-20T14:03:10.000Z",
+      "type": "user",
+      "content": "Write a script that backs up ~/Pictures to the NAS at 192.0.2.40 every night."
+    },
+    {
+      "id": "a2",
+      "timestamp": "2025-11-20T14:03:58.000Z",
+      "type": "gemini",
+      "content": "I'll write the script and schedule it with cron.",
+      "toolCalls": [
+        {
+          "id": "write_file-1763647440512-a1",
+          "name": "write_file",
+          "args": {
+            "file_path": "/home/lena/bin/photo-backup.sh",
+            "content": "#!/bin/sh\nset -eu\nrsync -a --delete \"$HOME/Pictures/\" backup@192.0.2.40:/volume1/photos/\n"
+          },
+          "result": [
+            {
+              "functionResponse": {
+                "id": "write_file-1763647440512-a1",
+                "name": "write_file",
+                "response": {
+                  "output": "Successfully created and wrote to new file: /home/lena/bin/photo-backup.sh."
+                }
+              }
+            }
+          ],
+          "status": "success",
+          "timestamp": "2025-11-20T14:04:02.000Z",
+          "displayName": "WriteFile",
+          "description": "Writes content to a file.",
+          "renderOutputAsMarkdown": false,
+          "resultDisplay": {
+            "fileDiff": "+rsync -a --delete ...",
+            "fileName": "photo-backup.sh"
+          }
+        },
+        {
+          "id": "run_shell_command-1763647449000-a2",
+          "name": "run_shell_command",
+          "args": {
+            "command": "chmod +x ~/bin/photo-backup.sh && (crontab -l; echo '30 2 * * * ~/bin/photo-backup.sh') | crontab -",
+            "description": "Make the script executable and run it nightly at 02:30"
+          },
+          "result": [
+            {
+              "functionResponse": {
+                "id": "run_shell_command-1763647449000-a2",
+                "name": "run_shell_command",
+                "response": {
+                  "output": "Command: chmod +x ...\nStdout: (empty)\nExit Code: 0"
+                }
+              }
+            }
+          ],
+          "status": "success",
+          "timestamp": "2025-11-20T14:04:20.000Z",
+          "displayName": "Shell",
+          "description": "Runs a shell command.",
+          "renderOutputAsMarkdown": false
+        }
+      ],
+      "thoughts": [
+        {
+          "subject": "Choosing the tool",
+          "description": "rsync over SSH copies only what changed.",
+          "timestamp": "2025-11-20T14:03:40.000Z"
+        }
+      ],
+      "tokens": {
+        "input": 5210,
+        "output": 140,
+        "cached": 0,
+        "thoughts": 96,
+        "tool": 0,
+        "total": 5446
+      },
+      "model": "gemini-2.5-pro"
+    },
+    {
+      "id": "a3",
+      "timestamp": "2025-11-20T14:05:10.000Z",
+      "type": "gemini",
+      "content": "Done. The backup runs nightly at 02:30; it needs an SSH key for backup@192.0.2.40.",
+      "thoughts": [],
+      "tokens": {
+        "input": 5600,
+        "output": 40,
+        "cached": 4096,
+        "thoughts": 0,
+        "tool": 0,
+        "total": 5640
+      },
+      "model": "gemini-2.5-pro"
+    }
+  ]
+}

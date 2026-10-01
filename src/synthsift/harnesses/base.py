@@ -11,6 +11,11 @@ Modules in this package are imported automatically, so nothing else needs to
 change.  The zip layout ``host/user/<harness>/<file>`` routes a file to the
 parser whose ``name``/``aliases`` match ``<harness>``; files in unknown harness
 folders are offered to every implemented parser's :meth:`sniff`.
+
+A parser that needs more than the one file can name other zip members to read
+alongside it (:meth:`HarnessParser.companion_paths`), and one whose agent keeps
+the same conversation in several files can skip the lesser copies
+(:meth:`HarnessParser.superseded_by`).
 """
 
 from __future__ import annotations
@@ -42,18 +47,43 @@ class HarnessParser(ABC):
     description: ClassVar[str] = ""
     #: tool names whose calls start a sub-agent (counted as sub-agent calls on the dashboard)
     subagent_tools: ClassVar[tuple[str, ...]] = ()
+    #: hidden folders (``.name``) the agent keeps transcripts in, which ingest must not skip as junk
+    hidden_folders: ClassVar[tuple[str, ...]] = ()
+    #: transcript file names without a transcript extension (e.g. ``overview.txt``)
+    file_names: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self) -> None:
-        #: other files from the same upload that belong to the one being parsed,
-        #: keyed by name suffix (e.g. ``"-wal"`` for a SQLite write-ahead log).
-        #: Filled in by the ingester before :meth:`parse` is called.
+        #: other files from the same upload that belong to the one being parsed, keyed as
+        #: :meth:`companion_paths` names them.  Filled in by the ingester before :meth:`parse`.
         self.companions: dict[str, bytes] = {}
+        #: the file's path inside the upload, set by the ingester
+        self.source_path: str = ""
         #: non-fatal problems met while parsing, reported back to the user
         self.warnings: list[str] = []
 
     @abstractmethod
     def parse(self, raw: bytes, filename: str) -> list[Conversation]:
         """Turn one transcript file into one or more conversations."""
+
+    @classmethod
+    def companion_paths(cls, path: str) -> dict[str, str]:
+        """Other zip members to read with ``path``: {key in :attr:`companions`: member path}.
+
+        Missing members are left out.  By default a SQLite database's ``-wal`` file.
+        """
+        return {"-wal": path + "-wal"}
+
+    @classmethod
+    def owns(cls, path: str) -> bool:
+        """True when ``path``'s shape alone says it is this agent's transcript, whatever folder holds it
+        (e.g. a zip of ``~/.gemini`` holds both Gemini CLI and Antigravity files)."""
+        return False
+
+    @classmethod
+    def superseded_by(cls, path: str) -> tuple[str, ...]:
+        """Zip members holding a fuller copy of ``path``'s conversation; when one is in the upload,
+        ``path`` is skipped."""
+        return ()
 
     def sniff(self, raw: bytes, filename: str) -> float:
         """Confidence 0..1 that ``raw`` is in this harness' format.
@@ -142,6 +172,18 @@ def register(cls: type[HarnessParser]) -> type[HarnessParser]:
 
 def all_parsers() -> list[type[HarnessParser]]:
     return sorted(_REGISTRY.values(), key=lambda c: (not c.implemented, c.name))
+
+
+def hidden_folders() -> set[str]:
+    return {f for cls in _REGISTRY.values() for f in cls.hidden_folders}
+
+
+def extra_file_names() -> set[str]:
+    return {f.lower() for cls in _REGISTRY.values() for f in cls.file_names}
+
+
+def path_owner(path: str) -> type[HarnessParser] | None:
+    return next((cls for cls in _REGISTRY.values() if cls.owns(path)), None)
 
 
 def get_parser(folder: str) -> type[HarnessParser] | None:

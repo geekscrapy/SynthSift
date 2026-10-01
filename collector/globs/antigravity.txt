@@ -1,16 +1,22 @@
-# Google Antigravity – agent conversations
+# Google Antigravity (the IDE and the agy CLI) – conversation transcripts
 # Syntax: see claude_code.txt.
 #
-# Google does not document where the Antigravity IDE stores conversations, so
-# nothing is collected by default.  SynthSift's antigravity parser is a
-# placeholder.
-#
-# Documented capture: headless runs print the whole run as NDJSON
-#   agy -p "…" --output-format stream-json > ~/antigravity-runs/run-001.jsonl
-# Keep such runs in one folder and list it here, e.g.:
-# ~/antigravity-runs/./*.jsonl
-#
-# Unverified locations reported by users (not documented by Google) – the
-# conversation files there are binary.  Uncomment to preserve them as evidence:
-# ~/.gemini/antigravity/./conversations/*
-# ~/.gemini/antigravity/./brain/**/*
+# Every conversation keeps a plaintext transcript in its "brain" folder, in up
+# to three copies; SynthSift reads the fullest and skips the others:
+#   brain/<conversation id>/.system_generated/logs/transcript_full.jsonl
+#   brain/<conversation id>/.system_generated/logs/transcript.jsonl   (large outputs truncated)
+#   brain/<conversation id>/.system_generated/logs/overview.txt
+# The agent's own store, conversations/<id>.pb (AES-encrypted) or .db
+# (protobuf in an unpublished schema), cannot be read and is not collected.
+
+# The IDE: ~/.gemini/antigravity, or antigravity-ide in newer builds
+# (Windows: %USERPROFILE%\.gemini\…)
+~/.gemini/./antigravity/brain/*/.system_generated/logs/transcript*.jsonl
+~/.gemini/./antigravity/brain/*/.system_generated/logs/overview.txt
+~/.gemini/./antigravity-ide/brain/*/.system_generated/logs/transcript*.jsonl
+~/.gemini/./antigravity-ide/brain/*/.system_generated/logs/overview.txt
+
+# The CLI, with its prompt log (it names each conversation's workspace)
+~/.gemini/./antigravity-cli/brain/*/.system_generated/logs/transcript*.jsonl
+~/.gemini/./antigravity-cli/brain/*/.system_generated/logs/overview.txt
+~/.gemini/./antigravity-cli/history.jsonl

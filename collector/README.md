@@ -43,7 +43,7 @@ needed:
 
 - `--target AGENT=DIR`: DIR holds that agent's transcripts. Everything
   below it is searched for the agent's transcript files, whatever the folder
-  layout. The files are the names at the end of its glob list, for example
+  layout, hidden folders included. The files are the names at the end of its glob list, for example
   `*.jsonl` for `claude_code`; `--list-agents` shows them. Paths in the zip
   are relative to DIR, and the files are filed under the folder owner's
   account.
@@ -64,9 +64,9 @@ files are meant for, and becomes the agent folder in the zip.
 |---|---|---|
 | [`claude_code.txt`](globs/claude_code.txt) | Claude Code | ready |
 | [`openclaw.txt`](globs/openclaw.txt) | OpenClaw (incl. Clawdbot / Moltbot installs) | ready |
-| [`gemini.txt`](globs/gemini.txt) | Gemini CLI | placeholder: files are kept, not parsed yet |
+| [`gemini.txt`](globs/gemini.txt) | Gemini CLI | ready |
+| [`antigravity.txt`](globs/antigravity.txt) | Google Antigravity (IDE and CLI) | ready |
 | [`hermes.txt`](globs/hermes.txt) | Hermes Agent | placeholder: files are kept, not parsed yet |
-| [`antigravity.txt`](globs/antigravity.txt) | Google Antigravity | nothing by default: storage is undocumented (see the file) |
 
 Each line is one glob:
 

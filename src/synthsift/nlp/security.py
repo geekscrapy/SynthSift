@@ -163,19 +163,22 @@ class _Mention:
 
 
 # Bulky text arguments of file-writing, editing and messaging tools (Write, Edit,
-# apply_patch, message …): the text is data being written, not a command.
+# apply_patch, message, Antigravity's write_to_file / replace_file_content …): the
+# text is data being written, not a command.  Compared in lower case.
 _BULK_ARGS = {"content", "contents", "new_string", "old_string", "old_str", "new_str", "file_text", "text", "body",
-              "patch", "edits", "new_source", "diff", "description", "prompt", "message", "instructions"}
+              "patch", "edits", "new_source", "diff", "description", "prompt", "message", "instructions", "instruction",
+              "codecontent", "replacementchunks", "replacementcontent", "targetcontent", "task"}
 
 
 def command_text(arguments: dict[str, Any] | None, tool_name: str | None) -> str:
     """Best-effort single command string from a tool call's arguments."""
     if not arguments:
         return tool_name or ""
-    preferred = ("command", "cmd", "commands", "script", "code", "query", "sql", "input", "args", "arg")
+    preferred = ("command", "cmd", "commandline", "commands", "script", "code", "query", "sql", "input", "args", "arg")
+    by_key = {str(k).lower(): v for k, v in arguments.items()}  # Antigravity capitalises: CommandLine
     for key in preferred:
-        if key in arguments and isinstance(arguments[key], (str, list)):
-            v = arguments[key]
+        v = by_key.get(key)
+        if isinstance(v, (str, list)):
             return " ".join(map(str, v)) if isinstance(v, list) else str(v)
     parts = []
     for k, v in arguments.items():
