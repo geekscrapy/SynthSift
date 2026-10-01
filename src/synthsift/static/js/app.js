@@ -127,7 +127,7 @@
     $("underline-toggle").classList.toggle("on", S.underline);
     $("panel-body").classList.toggle("no-underline", !S.underline);
     $("t-labels").classList.toggle("on", S.labels);
-    for (const b of $("layout-toggle").querySelectorAll("button")) b.classList.toggle("on", b.dataset.layout === S.layout);
+    markLayout();
     applyDock();
     document.documentElement.style.setProperty("--bottom-h", store.get("bottomHeight", 320) + "px");
   }
@@ -948,9 +948,14 @@
     }
   }
 
+  // the layout buttons; clustering only applies to Force, so Layers hides its select
+  function markLayout() {
+    for (const b of $("layout-toggle").querySelectorAll("button")) b.classList.toggle("on", b.dataset.layout === S.layout);
+    $("cluster-mode").closest(".mini-select").classList.toggle("hidden", S.layout === "layers");
+  }
   function setLayout(layout) {
     S.layout = layout;
-    for (const b of $("layout-toggle").querySelectorAll("button")) b.classList.toggle("on", b.dataset.layout === layout);
+    markLayout();
     api("/api/settings", { method: "PUT", body: { layout } }).catch(() => {});
     S.settings.layout = layout;
     applyClustering();
