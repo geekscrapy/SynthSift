@@ -61,7 +61,7 @@ SCHEMA: list[Field] = [
           "Smaller batches of new paragraphs run in threads (no process start-up cost).", min=0, max=1_000_000, step=500),
     # --------------------------------------------------------- graph content
     Field("include_conversation_nodes", "Conversation nodes", "bool", True, "graph", S_GRAPH),
-    Field("include_system", "System messages", "bool", False, "graph", S_GRAPH),
+    Field("include_system", "System messages", "bool", True, "graph", S_GRAPH),
     Field("include_thoughts", "Thought nodes", "bool", True, "graph", S_GRAPH),
     Field("include_tool_args", "Tool argument nodes", "bool", True, "graph", S_GRAPH),
     Field("include_tool_results", "Tool result nodes", "bool", True, "graph", S_GRAPH),

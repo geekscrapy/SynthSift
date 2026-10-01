@@ -103,7 +103,7 @@ def build_graph(
         calls: dict[str, str] = {}
 
         for ev in evs:
-            if ev.type == "system" and not cfg.get("include_system", False):
+            if ev.type == "system" and not cfg.get("include_system", True):
                 continue
             if ev.type == "thought" and not cfg.get("include_thoughts", True):
                 continue

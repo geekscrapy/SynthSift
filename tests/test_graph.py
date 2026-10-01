@@ -26,6 +26,13 @@ def test_thoughts_live_on_their_own_layer(sample_workspace):
     assert any(d["type"] == "entity" and d["layer"] == "thought" for _, d in G.nodes(data=True))
 
 
+def test_system_messages_are_turns_on_the_flow(sample_workspace):
+    G = sample_workspace.graph
+    system = [e for evs in sample_workspace.events.values() for e in evs if e.type == "system"]
+    assert system and all(G.nodes[e.id]["type"] == "system" and G.nodes[e.id]["layer"] == "dialogue" for e in system)
+    assert all(any(d["type"] == "flow" for _, _, d in G.in_edges(e.id, data=True)) for e in system)
+
+
 def test_entity_occurrences_point_at_the_text(sample_workspace):
     G = sample_workspace.graph
     paras = sample_workspace.paragraphs
@@ -65,7 +72,7 @@ def test_graph_settings(sample_workspace):
     assert all(len(d["conv"]) == 1 for _, d in per_conv.nodes(data=True) if d["type"] == "entity")
     frequent = _rebuild(ws, min_mentions=3)
     assert all(d["count"] >= 3 for _, d in frequent.nodes(data=True) if d["type"] == "entity")
-    bare = _rebuild(ws, include_thoughts=False, include_tool_args=False, include_entities=False)
+    bare = _rebuild(ws, include_system=False, include_thoughts=False, include_tool_args=False, include_entities=False)
     assert Counter(d["type"] for _, d in bare.nodes(data=True)).keys() <= {"conversation", "user", "assistant", "tool_call", "tool_result"}
     hubs = _rebuild(ws, tool_hubs=True)
     assert any(d["type"] == "tool_hub" for _, d in hubs.nodes(data=True))
