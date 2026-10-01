@@ -794,6 +794,8 @@ body.panel-only .panel { width: 100%; flex: 1 1 auto; }
 .data-grid tbody tr { cursor: pointer; }
 .data-grid tbody tr:hover td { background: var(--surface-low); }
 .data-grid tbody tr.selected td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.data-grid tbody tr.flash td { animation: row-flash 2.2s ease-out; }
+@keyframes row-flash { from, 40% { background: color-mix(in srgb, var(--mark-strong) 30%, transparent); } }
 .data-grid tbody tr.checked td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
 .data-grid td.cb, .data-grid th.cb { width: 36px; padding-left: 8px; }
 .data-grid .cbx { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--on-surface-variant); cursor: pointer; border: 0; background: transparent; }

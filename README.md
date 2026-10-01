@@ -355,7 +355,7 @@ The corpus at a glance, for the scope and time window you have set.
 | **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
 | **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
 | **Conversation chips** | Under the conversation picker: host, user, agent, model, file, plus the channel, session key, working directory, git branch, sub-agent and deleted/reset state when the agent recorded them. Click one to filter: host, user and agent narrow the scope, the file shows only this session, and the model or any other chip shows every session with the same value (*Undo* in the snackbar). |
-| **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. |
+| **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. Each turn and each match has a timeline button that opens its row on the Timeline page. |
 | **Security tab** | Findings grouped by severity and category, each with its `source → action → sink` chain and where it happened. Click one to jump to the turn. **Flagged** (graph toolbar) fades everything without a finding; flagged nodes carry a severity ring and dataflow edges are drawn bold. |
 | **Tagging** | See [Tagging and comments](#tagging-and-comments) below. |
 | **Docking** | The panel docks right, left or bottom, or opens in its own window (the two windows stay in sync). |
@@ -430,7 +430,9 @@ extracted terms.
   nodes and every paragraph it appears in, with the word highlighted.
   Double-click, <kbd>Enter</kbd> or the graph icon by its title opens the graph in the same
   tab with it selected; a turn or session also narrows the scope to its
-  conversation. *Back* returns to the table.
+  conversation. *Back* returns to the table. Each paragraph has its own graph
+  and timeline buttons, and a turn has a timeline button by its title. The
+  timeline button selects the turn's row on the Timeline page.
 - **Keys**: <kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>j</kbd>/<kbd>k</kbd>) move
   through the rows, <kbd>Space</kbd> checks one, <kbd>←</kbd>/<kbd>→</kbd>
   page, <kbd>/</kbd> searches.
@@ -457,6 +459,11 @@ system prompt, sits at the time of the next turn in its conversation (marked ≈
 - **Detail pane**: the turn's findings with their `source → action → sink`
   chains, its tags and comment, and the turn in context, with adjustable
   **# before / # after**.
+- **Show in timeline**: the timeline buttons on the other pages (and
+  `/timeline?select=event:<id>`) select a turn's row, scroll it into view and
+  open its details. If filters hide the row, the page's own filters are cleared
+  first. If it is still hidden, only the part of the scope that hides it is
+  widened.
 - **CSV export** of the filtered turns, text included.
 
 ![Timeline filtered to one conversation by its column filter, with a finding's chain and context](docs/timeline.jpg)

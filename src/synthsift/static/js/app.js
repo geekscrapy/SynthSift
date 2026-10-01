@@ -1638,7 +1638,8 @@
         (ev.call_id ? `<span class="tag mono">${esc(ev.call_id)}</span>` : "") +
         `<span class="ts">${esc(fmtTime(ev.ts))}</span>` +
         `<button class="icon-btn sm inspect" data-inspect="${esc(ev.id)}" title="What the enrichment modules extracted from this turn"><span class="msi xs">data_object</span></button>` +
-        `<button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button></div>` +
+        `<button class="icon-btn sm jump" data-jump="${esc(ev.id)}" title="Show in graph"><span class="msi xs">my_location</span></button>` +
+        `<button class="icon-btn sm" data-timeline="${esc(ev.id)}" title="Show in timeline"><span class="msi xs">timeline</span></button></div>` +
         (ann && ann.comment ? `<div class="comment-note"><span class="msi">comment</span>${esc(ann.comment)}</div>` : "") +
         `<div class="msg-body">${ev.p.map((pid) => paraHTML(S.paras.get(pid))).join("")}</div>` +
         (long && !hasMark ? `<button class="btn text sm expand-btn" data-expand="1"><span class="msi">expand_more</span>Show full result</button>` : "") + `</div>`;
@@ -1720,7 +1721,8 @@
         const group = el("div", { class: "match-group" },
           el("div", { class: "match-head" }, el("span", { class: "dot", style: { background: c.color } }),
             el("span", { class: "t grow" }, c.title), el("span", {}, ev ? ev.label : ""),
-            el("button", { class: "icon-btn sm", title: "Open in transcript", "data-open": list[w.hits[0]] }, icon("open_in_new", "sm"))),
+            el("button", { class: "icon-btn sm", title: "Open in transcript", "data-open": list[w.hits[0]] }, icon("open_in_new", "sm")),
+            el("button", { class: "icon-btn sm", title: "Show in timeline", "data-timeline": firstHit.e }, icon("timeline", "sm"))),
           el("div", { class: "match-body", html }));
         frag.append(group);
       }
@@ -1871,6 +1873,13 @@
     }
     const open = t.closest("[data-open]");
     if (open) { showPara(open.dataset.open); return; }
+    const tl = t.closest("[data-timeline]");
+    if (tl) {
+      // the turn's row on the timeline; a popped-out transcript keeps its window
+      const url = SS.pageURL("/timeline", { select: "event:" + tl.dataset.timeline });
+      if (S.panelOnly) window.open(url); else location.href = url;
+      return;
+    }
     const jump = t.closest("[data-jump]");
     if (jump) {
       const id = jump.dataset.jump;

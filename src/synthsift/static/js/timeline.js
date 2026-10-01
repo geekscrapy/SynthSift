@@ -450,6 +450,37 @@
     const tr = document.querySelector(`.data-grid tr[data-key="${CSS.escape(P.rows[i].key)}"]`);
     tr && tr.scrollIntoView({ block: "nearest" });
   }
+  /** select a turn's row ("Show in timeline"), widening only what hides it: the page's own filters first, then
+   *  the hidden sessions, the tag filter and the scope */
+  function select(key) {
+    const r = baseRows().find((x) => x.key === key);
+    if (!r) { snack("That turn is not in the workspace."); return; }
+    const found = () => rowIndex(key) >= 0;
+    if (!found() && (P.q || activeColumnFilters().length || P.commentedOnly)) { resetPageFilters(); grid = null; render(); }
+    if (!found()) {
+      const c = W.convs.get(r.conv), f = W.filter, tags = WS.tagsFor(key), patch = {};
+      if (W.hiddenConvs.delete(r.conv)) store.set("hiddenConvs", [...W.hiddenConvs]);
+      if (W.tagFilter.size && !tags.some((t) => W.tagFilter.has(t))) { W.tagFilter.clear(); store.set("tagFilter", []); WS.broadcast({ type: "tagFilter", tags: [] }); }
+      if (W.hideIgnored && tags.includes("ignore")) { W.hideIgnored = false; store.set("hideIgnored", false); }
+      if (f.host && f.host !== c.host) Object.assign(patch, { host: c.host, user: c.user, harness: c.harness });
+      else if (f.user && f.user !== c.user) Object.assign(patch, { user: c.user, harness: c.harness });
+      else if (f.harness && f.harness !== c.harness) patch.harness = c.harness;
+      if (f.conv && f.conv !== c.id) patch.conv = "";
+      if (!WS.inWindow(r.when)) Object.assign(patch, { from: "", to: "" });
+      WS.setFilter(patch); // shares the hidden sessions too, and re-renders
+    }
+    const i = rowIndex(key);
+    if (i < 0) { snack("That turn is not on the timeline."); return; }
+    ensureShown(i);
+    openDetail(key);
+    P.anchor = key;
+    const tr = document.querySelector(`.data-grid tr[data-key="${CSS.escape(key)}"]`);
+    if (tr) {
+      tr.scrollIntoView({ block: "center" });
+      tr.classList.add("flash");
+      setTimeout(() => tr.classList.remove("flash"), 2200);
+    }
+  }
   function reveal(key) {
     const ev = key.startsWith("event:") && W.events.get(key.slice(6));
     if (ev) WS.showInGraph({ id: ev.id, para: ev.p[0] });
@@ -505,11 +536,13 @@
     } catch (e) {
       snack("Could not load the workspace: " + e.message);
     }
-    filtersFromURL(WS.scopeFromURL());
+    const params = WS.scopeFromURL();
+    filtersFromURL(params);
     history.replaceState(null, "", location.pathname);
     render();
+    if (params.has("select")) select(params.get("select"));
     WS.watchVersion();
   }
   boot();
-  window.SynthSiftTimeline = { P, render };
+  window.SynthSiftTimeline = { P, render, select };
 })();

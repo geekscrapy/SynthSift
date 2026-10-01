@@ -221,7 +221,6 @@ const WS = (() => {
   }
 
   /* ---------------------------------------------------------- navigation */
-  // Show something in the graph: reuse an open graph tab if one answers, else open one.
   /** open the graph in this tab with the item selected and focused; a turn, tool argument or session also narrows
    *  the scope to its conversation (a term keeps the scope: it can span many). Back returns to this page. */
   function showInGraph({ id = null, para = null } = {}) {
@@ -230,6 +229,12 @@ const WS = (() => {
     const cid = n && n.type !== "entity" && n.type !== "tool_hub" && n.conv && n.conv.length === 1 ? n.conv[0] : n ? null : ev && ev.c;
     const c = cid && W.convs.get(cid);
     location.href = SS.pageURL("/", { ...(c ? { host: c.host, user: c.user, harness: c.harness, conv: c.id } : {}), select: id, para });
+  }
+  /** the turn's row on the timeline, selected; the timeline page selects it in place */
+  function showInTimeline(evId) {
+    const key = "event:" + evId;
+    if (window.SynthSiftTimeline) window.SynthSiftTimeline.select(key);
+    else location.href = SS.pageURL("/timeline", { select: key });
   }
 
   /* ------------------------------------------------------------- sync */
@@ -401,14 +406,15 @@ const WS = (() => {
   }
 
   /* ------------------------------------------------------ detail views */
-  /** small superscript buttons right after the title: `copy` (text to copy) and `graph` (show it in the graph) */
-  function detailHead(icoName, color, title, chips, onClose, { copy = null, graph = null } = {}) {
+  /** small superscript buttons right after the title: `copy` (text to copy), `graph` and `timeline` (show it there) */
+  function detailHead(icoName, color, title, chips, onClose, { copy = null, graph = null, timeline = null } = {}) {
     const sup = (ic, label, onclick) => el("button", { class: "title-sup", title: label, "aria-label": label, onclick }, icon(ic));
     return el("div", { class: "detail-head" },
       el("span", { class: "ico", style: { background: color } }, icon(icoName)),
       el("div", { class: "grow" }, el("div", { class: "title" }, title,
         copy ? sup("content_copy", "Copy", () => { navigator.clipboard && navigator.clipboard.writeText(copy); snack("Copied"); }) : null,
-        graph ? sup("hub", "Show in graph", graph) : null), el("div", { class: "sub" }, ...chips)),
+        graph ? sup("hub", "Show in graph", graph) : null,
+        timeline ? sup("timeline", "Show in timeline", timeline) : null), el("div", { class: "sub" }, ...chips)),
       onClose ? el("button", { class: "icon-btn sm", title: "Close", onclick: onClose }, icon("close", "sm")) : null);
   }
   const tag = (text) => el("span", { class: "tag" }, text);
@@ -436,7 +442,8 @@ const WS = (() => {
         box.append(el("div", { class: "occ" },
           el("div", { class: "occ-head" }, el("span", { class: "dot", style: { background: c.color } }),
             el("span", { class: "t grow", title: c.title }, `${c.title} · ${ev.label}`), el("span", {}, fmtTime(ev.ts)),
-            el("button", { class: "icon-btn sm", title: "Show in the graph and transcript", onclick: () => showInGraph({ id: n.id, para: pid }) }, icon("open_in_new", "xs"))),
+            el("button", { class: "icon-btn sm", title: "Show in the graph and transcript", onclick: () => showInGraph({ id: n.id, para: pid }) }, icon("hub", "xs")),
+            el("button", { class: "icon-btn sm", title: "Show in timeline", onclick: () => showInTimeline(p.e) }, icon("timeline", "xs"))),
           el("div", { class: `occ-body${mono ? " mono" : ""}`, html: markedHTML(p.t, spans) })));
       }
       if (pids.length > count) {
@@ -546,7 +553,7 @@ const WS = (() => {
       el("h4", {}, icon("forum", "xs"), "In context", el("span", { class: "grow" }), stepper("before", "before"), stepper("after", "after")), ctxBox);
     return el("div", {}, detailHead(SS.ROLE_ICON[ev.type] || "chat", k.color, ev.label,
       [tag(`${c.host} / ${c.user}`), tag(c.title), ev.ts ? tag(fmtTime(ev.ts)) : null].filter(Boolean), onClose,
-      { graph: () => showInGraph({ id: evId, para: ev.p[0] }) }), body);
+      { graph: () => showInGraph({ id: evId, para: ev.p[0] }), timeline: () => showInTimeline(evId) }), body);
   }
 
   function convDetail(cid, { onClose, onSelect } = {}) {
@@ -581,7 +588,7 @@ const WS = (() => {
     eventVisible: M.eventVisible, paraVisible,
     targetOf, annOf, tagsFor, nodeTags: M.nodeTags, labelFor, convFor: M.convFor, tsFor: M.tsFor, seenRange,
     tagChipsHTML, itemMenu, annotationSection, renderTagFilter,
-    findingsForNode, chainEl, endpointLabel: M.endpointLabel, showInGraph,
+    findingsForNode, chainEl, endpointLabel: M.endpointLabel, showInGraph, showInTimeline,
     wireTopbar, scopeSection, tagsHeading, renderScope, scopeActive, resetScope, renderCatChips, pager, columnsMenu,
     pageCheckbox, rowCheckbox, toggleCheck, bulkBar, bulkMenu,
     nodeDetail, turnDetail, convDetail,
