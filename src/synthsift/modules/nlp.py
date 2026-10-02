@@ -8,12 +8,15 @@ triples into relations between whatever entities end up owning those words.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from ..categories import NER_TO_CATEGORY
 from ..db import table
 from ..fields import Field
 from ..nlp import gazetteer
+from ..nlp.models import MODEL_NAMES, model_state
+from ..nlp.models import resolve as resolve_model
 from ..nlp.pipeline import TEXT_SOURCES, analysed_text, analysis_mode, load_spacy, resolve_wordnet, wordnet_lexicon
 from .base import Module, register, span_table
 
@@ -57,8 +60,8 @@ class NLPModule(Module):
     uses_settings = TEXT_SOURCES
     options = (
         Field("spacy_model", "spaCy model", "select", "en_core_web_sm", "parse", "",
-              "Larger models are slower but recognise entities better. Only installed models work.",
-              options=["en_core_web_sm", "en_core_web_md", "en_core_web_lg", "en_core_web_trf"]),
+              "Larger models are slower but recognise entities better. Download them below; until the chosen "
+              "model is there, the small one is used.", options=MODEL_NAMES),
         Field("use_ner", "Named entity recognition", "bool", True, "parse", "",
               "People, organisations, places, products, dates, money …"),
         Field("ner_labels", "NER labels", "multiselect",
@@ -83,10 +86,18 @@ class NLPModule(Module):
               "Dependency parse each sentence; link entities via their verb."),
     )
 
+    @property
+    def models_dir(self) -> Path | None:
+        return self.data_dir / "models" if self.data_dir is not None else None
+
+    def fingerprint_extra(self, ctx: Any) -> Any:
+        # downloading the chosen model (or a new version of it) changes what this module finds
+        return model_state(self.opt("spacy_model", "en_core_web_sm"), self.models_dir)
+
     def setup(self) -> None:
         from spacy.matcher import PhraseMatcher
 
-        self.nlp = load_spacy(self.opt("spacy_model", "en_core_web_sm"))
+        self.nlp = load_spacy(resolve_model(self.opt("spacy_model", "en_core_web_sm"), self.models_dir))
         self.has_parser = "parser" in self.nlp.pipe_names
         self.has_ner = "ner" in self.nlp.pipe_names
         self.ner_labels = set(self.opt("ner_labels", []))

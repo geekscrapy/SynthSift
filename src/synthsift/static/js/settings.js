@@ -103,11 +103,9 @@
         return wrap;
       }
       case "select": {
+        if (f.key === "spacy_model") return modelsControl(f);
         const sel = el("select", { class: "select", onchange: (e) => setValue(f, e.target.value) });
-        for (const o of f.options) {
-          const missing = f.key === "spacy_model" && !state.models.includes(o);
-          sel.append(el("option", { value: o, selected: o === v }, missing ? `${o} (not installed)` : o));
-        }
+        for (const o of f.options) sel.append(el("option", { value: o, selected: o === v }, o));
         return sel;
       }
       case "multiselect": {
@@ -145,7 +143,7 @@
 
   function renderRow(f) {
     if (f.type === "hidden") return null;
-    const wide = ["textarea", "multiselect", "lists", "checks"].includes(f.type);
+    const wide = ["textarea", "multiselect", "lists", "checks"].includes(f.type) || f.key === "spacy_model";
     return el("div", { class: `set-row${wide ? " wide" : ""}${f.key in state.dirty ? " dirty" : ""}`, "data-row": f.key, "data-search": `${f.label} ${f.help} ${f.key}`.toLowerCase() },
       el("div", { class: "lbl" },
         el("div", { class: "name" }, f.label, el("span", { class: `scope ${f.scope}`, title: "What happens when this changes" }, SCOPE_LABEL[f.scope])),
@@ -334,6 +332,85 @@
         el("tbody", {}, rows)) : null,
       zone, progress,
       !on && lists.length ? el("div", { class: "muted" }, icon("info", "xs"), " The module is off – switch it on above and save to match these lists.") : null].filter(Boolean));
+  }
+
+  /* spaCy models: pick the one to use and download the others on request. Downloads run on the server (into the
+     data directory's models folder) and apply at once; picking a model is saved like any setting. */
+  function modelsControl(f) {
+    const box = el("div", { class: "lists-box models-box" }, el("div", { class: "muted" }, "Loading models…"));
+    let timer = 0;
+    const seen = new Map(); // download state last drawn, to notice when one finishes
+    const load = async () => {
+      clearTimeout(timer);
+      if (seen.size && !box.isConnected) return; // the page was re-rendered: the new control polls
+      let r;
+      try { r = await api("/api/models"); } catch (e) { box.replaceChildren(el("div", { class: "muted" }, e.message)); return; }
+      state.models = r.available;
+      for (const m of r.models) {
+        const was = seen.get(m.name);
+        const now = m.download && m.download.state;
+        if (was && was !== now && now === "done") finished(m, r);
+        if (was && was !== now && now === "error") snack(`Downloading ${m.name} failed: ${m.download.error}`, null, 8000);
+        seen.set(m.name, now);
+      }
+      drawModels(box, f, r, load);
+      if (r.models.some((m) => m.download && ["starting", "downloading", "unpacking"].includes(m.download.state))) timer = setTimeout(load, 700);
+    };
+    const finished = (m, r) => {
+      if (r.selected === m.name) { snack(`${m.name} downloaded – re-analysing with it…`, null, 4000); watchProgress(); }
+      else snack(`${m.name} downloaded`, { label: "Use it", run: () => { setValue(f, m.name); load(); } }, 8000);
+    };
+    load();
+    return box;
+  }
+
+  function drawModels(box, f, data, reload) {
+    const chosen = current(f.key);
+    const mb = (n) => (n >= 1e8 ? `${Math.round(n / 1e6)}` : (n / 1e6).toFixed(1));
+    const act = async (method, url) => {
+      try { await api(url, { method }); } catch (e) { snack(e.message, null, 6000); }
+      reload();
+    };
+    const rows = data.models.map((m) => {
+      const dl = m.download;
+      const running = dl && ["starting", "downloading", "unpacking"].includes(dl.state);
+      const ready = m.state !== "missing";
+      let status;
+      if (running) {
+        const pct = dl.total ? Math.round((100 * dl.done) / dl.total) : 0;
+        status = el("div", { class: "upload-row" }, el("span", { class: "spinner sm" }),
+          el("span", {}, dl.state === "unpacking" ? "Unpacking…" : dl.total ? `${mb(dl.done)} / ${mb(dl.total)} MB` : "Starting…"),
+          el("div", { class: "mini-bar" }, el("div", { class: "bar", style: { width: `${dl.state === "unpacking" ? 100 : pct}%` } })));
+      } else if (m.state === "installed") {
+        status = el("span", { class: "status-ok", title: "Installed as a Python package" }, icon("check", "xs"), ` Installed ${m.version}`);
+      } else if (m.state === "downloaded") {
+        status = el("span", { class: "status-ok", title: `In ${data.folder}` }, icon("check", "xs"), ` Downloaded ${m.version}`);
+      } else {
+        status = el("span", { class: "muted" }, dl && dl.state === "error" ? el("span", { class: "status-stub", title: dl.error }, icon("error", "xs"), " Failed") : "Not downloaded");
+      }
+      const action = running ? null
+        : m.state === "missing" ? el("button", { class: "btn tonal sm", type: "button", onclick: () => act("POST", `/api/models/${m.name}/download`) },
+          icon("download", "sm"), dl && dl.state === "error" ? "Retry" : "Download")
+          : m.state === "downloaded" ? el("button", { class: "icon-btn sm", type: "button", title: "Remove the download", onclick: async () => {
+            if (!await SS.confirmDialog({ title: `Remove ${m.name}?`, text: `Its ${m.size_mb} MB download is deleted.${chosen === m.name ? " The small model is used until it is downloaded again." : ""}`, ok: "Remove", danger: true })) return;
+            act("DELETE", `/api/models/${m.name}`);
+          } }, icon("delete", "sm")) : null;
+      const warn = [];
+      if (chosen === m.name && !ready) warn.push(el("div", { class: "status-stub" }, icon("warning", "xs"), " Not downloaded yet – the small model is used until it is."));
+      if (ready && m.missing_requirements.length) warn.push(el("div", { class: "status-stub" }, icon("warning", "xs"), " Needs ",
+        el("code", {}, m.missing_requirements.join(", ")), " – install with ", el("code", {}, `uv pip install ${m.missing_requirements.map((x) => x.split(/[<>=!~; ]/)[0]).join(" ")}`)));
+      return el("tr", { class: chosen === m.name ? "chosen" : "", "data-model": m.name },
+        el("td", {}, el("input", { type: "radio", name: "spacy_model", checked: chosen === m.name, title: "Use this model", "aria-label": `Use ${m.name}`,
+          onchange: () => { setValue(f, m.name); drawModels(box, f, data, reload); } })),
+        el("td", { class: "grow" }, el("div", {}, el("b", {}, m.label), " ", el("span", { class: "muted mono" }, m.name)),
+          el("div", { class: "muted" }, m.description), ...warn),
+        el("td", { class: "num muted" }, `~${m.size_mb} MB`),
+        el("td", { class: "model-status" }, status),
+        el("td", { style: { textAlign: "right" } }, action));
+    });
+    box.replaceChildren(el("table", { class: "data-table models-table" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Use"), el("th", {}, "Model"), el("th", {}, "Size"), el("th", {}, "Status"), el("th", {}))),
+      el("tbody", {}, rows)));
   }
 
   /* Security checks: switch each off or change its severity (saved like any setting). The list comes from the

@@ -1077,6 +1077,14 @@ body.panel-only .panel { width: 100%; flex: 1 1 auto; }
 .checks-table .tag { margin-left: 6px; }
 .checks-table .tag.warn { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
 .checks-box code { font-size: 12px; word-break: break-all; }
+.models-table td.grow { width: 100%; }
+.models-table td.num { white-space: nowrap; }
+.models-table td .muted { margin-top: 2px; }
+.models-table .model-status { min-width: 190px; white-space: nowrap; }
+.models-table .model-status .upload-row .mini-bar { min-width: 60px; }
+.models-table tr.chosen td { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.models-table input[type="radio"] { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
+.models-table code { font-family: var(--mono); font-size: 12px; }
 .checks-foot { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--r-s); background: var(--surface-low); color: var(--on-surface-variant); font-size: 13px; }
 @media (max-width: 640px) { .checks-foot { flex-wrap: wrap; } }
 .upload-row .mini-bar { flex: 1; }

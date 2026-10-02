@@ -37,6 +37,7 @@ from .models import Conversation
 from .modules import enabled_modules, para_hash, registry
 from .modules.entities import read_results
 from .modules.runner import Runner
+from .nlp.models import ModelStore
 from .nlp.pipeline import ParaResult
 from .segment import VERSION as SEGMENT_VERSION
 from .segment import Event, Paragraph, segment
@@ -100,6 +101,7 @@ class Workspace:
         self.uploads.mkdir(parents=True, exist_ok=True)
         self.lists_dir = data_dir / "lists"
         self.checks_dir = data_dir / "checks"  # analysts' own security checks
+        self.models = ModelStore(data_dir / "models")  # downloaded spaCy models
         self.settings = SettingsStore(data_dir / "settings.json")
         self.annotations = AnnotationStore(data_dir / "annotations.json")
         self.db = open_storage(data_dir / "synthsift.duckdb")

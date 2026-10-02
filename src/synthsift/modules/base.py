@@ -31,6 +31,7 @@ import hashlib
 import json
 from abc import ABC
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, ClassVar
 
 from ..db import Table, table
@@ -120,8 +121,10 @@ class Module(ABC):
     #: "claim": candidates compete for text; "label": they label whatever they overlap
     span_mode: ClassVar[str] = "claim"
 
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any], data_dir: Path | None = None):
         self.cfg = cfg
+        #: the workspace's data directory (downloaded models, IOC lists, user checks …); None in tests
+        self.data_dir = data_dir
 
     # ---------------------------------------------------------------- API
     @classmethod

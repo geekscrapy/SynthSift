@@ -69,12 +69,6 @@ def load_spacy(model: str):
     return nlp
 
 
-def installed_models() -> list[str]:
-    import spacy.util
-
-    return sorted(spacy.util.get_installed_models())
-
-
 @lru_cache(maxsize=1)
 def wordnet_lexicon() -> dict[str, tuple[str, ...]]:
     data = resources.files("synthsift.nlp").joinpath("data/wordnet_lexicon.tsv.gz").read_bytes()

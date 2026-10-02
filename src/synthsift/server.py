@@ -17,10 +17,10 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, checks
 from .graph.export import subgraph, to_graphml, to_pyvis_html
 from .harnesses import all_parsers
-from .modules import registry
+from .modules import enabled_modules, registry
 from .modules.ioc import LIST_SUFFIXES, disabled_lists
 from .modules.runner import module_stats
-from .nlp.pipeline import installed_models
+from .nlp import models as spacy_models
 from .store import Workspace
 
 STATIC = Path(str(resources.files("synthsift").joinpath("static")))
@@ -218,7 +218,7 @@ def create_app(workspace: Workspace) -> FastAPI:
         return {
             "schema": s.schema_json(),
             "values": s.values,
-            "installed_models": installed_models(),
+            "installed_models": spacy_models.available(ws().models.dir),
             "modules": [cls.info() for cls in registry().values()],
             "harnesses": [
                 {"name": p.name, "label": p.label, "aliases": list(p.aliases), "implemented": p.implemented,
@@ -244,6 +244,37 @@ def create_app(workspace: Workspace) -> FastAPI:
         ws().settings.reset()
         ws().schedule("segment")
         return {"values": ws().settings.values}
+
+    # ------------------------------------------------------------ models
+    def _models() -> dict:
+        w = ws()
+        return {"models": w.models.describe(), "selected": w.settings.values.get("spacy_model"),
+                "available": spacy_models.available(w.models.dir), "folder": str(w.models.dir.resolve())}
+
+    def _model_ready(name: str) -> None:
+        # the NLP module's fingerprint includes the model it loads: re-run it if this is the chosen one
+        values = ws().settings.values
+        if values.get("spacy_model") == name and "nlp" in enabled_modules(values):
+            ws().schedule("enrich")
+
+    @app.get("/api/models")
+    def get_models() -> dict:
+        return _models()
+
+    @app.post("/api/models/{name}/download")
+    def download_model(name: str) -> dict:
+        try:
+            ws().models.start(name, on_done=_model_ready)
+        except KeyError:
+            raise HTTPException(404, f"unknown model {name}") from None
+        return _models()
+
+    @app.delete("/api/models/{name}")
+    def delete_model(name: str) -> dict:
+        if not ws().models.remove(name):
+            raise HTTPException(404, f"{name} was not downloaded here")
+        _model_ready(name)
+        return _models()
 
     # ------------------------------------------------------------ checks
     @app.get("/api/checks")

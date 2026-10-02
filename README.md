@@ -925,12 +925,31 @@ See `samples/transcripts/` for complete examples.
 
 ## Better entity recognition
 
-The bundled `en_core_web_sm` model is fast but makes mistakes. Install a larger
-model and select it under Settings → Modules → spaCy NLP → spaCy model:
+The bundled `en_core_web_sm` model is fast but makes mistakes. Larger models
+are a click away: Settings → Modules → **spaCy NLP** → **spaCy model** lists the
+English pipelines with their sizes:
+
+| Model | Download | |
+|---|---|---|
+| `en_core_web_sm` | ~13 MB | bundled, fast |
+| `en_core_web_md` | ~34 MB | word vectors, noticeably better names, places and organisations |
+| `en_core_web_lg` | ~400 MB | the most accurate CPU model |
+| `en_core_web_trf` | ~460 MB | transformer: most accurate, slow without a GPU, and needs `uv pip install spacy-curated-transformers` |
+
+**Download** fetches the release that matches the installed spaCy, with
+progress, and unpacks it into `<data dir>/models/`. Nothing is installed into
+the Python environment. Pick the model with its radio button and save. If you
+download the model that is already chosen, the analysis re-runs with it straight
+away. Until the chosen model is there, the small one is used. A downloaded model
+can be removed again from the same table.
+
+Without internet access, set `SYNTHSIFT_SPACY_MODELS_URL` to a mirror of the
+release wheels, using the placeholders `{name}` and `{version}`, for example
+`https://mirror.example/spacy/{name}-{version}-py3-none-any.whl`. Models
+installed as packages are used too, and take precedence over downloads:
 
 ```bash
 uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl
-# or en_core_web_lg / en_core_web_trf
 ```
 
 ## Development

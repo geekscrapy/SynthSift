@@ -117,11 +117,12 @@ class Step:
 _WORKER_MODS: dict[str, tuple[str, Module]] = {}
 
 
-def _process_chunk(name: str, fp: str, cfg: dict[str, Any], paras: list[ParaIn], data: dict, columns: dict) -> dict:
+def _process_chunk(name: str, fp: str, cfg: dict[str, Any], data_dir: Path | None, paras: list[ParaIn], data: dict,
+                   columns: dict) -> dict:
     """Runs in a worker process: keeps one loaded instance per module (reloaded when its fingerprint changes)."""
     cached = _WORKER_MODS.get(name)
     if cached is None or cached[0] != fp:
-        mod = registry()[name](cfg)
+        mod = registry()[name](cfg, data_dir)
         mod.setup()
         _WORKER_MODS[name] = cached = (fp, mod)
     return cached[1].process(paras, Deps(data, columns))
@@ -147,7 +148,7 @@ class Runner:
         self.on_progress = on_progress
         self.reg = registry()
         self.enabled = enabled_modules(cfg)
-        self.inst = {n: self.reg[n](cfg) for n in self.enabled}
+        self.inst = {n: self.reg[n](cfg, data_dir) for n in self.enabled}
         self.deps = {n: [d for d in self.inst[n].dependencies(self.enabled) if d in self.enabled] for n in self.enabled}
         self.order = self._toposort()
         self.steps = {n: Step(n, self.reg[n].label, self.reg[n].kind, self.reg[n].scope) for n in self.order}
@@ -301,7 +302,7 @@ class Runner:
                     fut = None
                     if job.in_process:
                         try:
-                            fut = procs.submit(_process_chunk, n, job.fp, self.cfg, paras, data, cols)
+                            fut = procs.submit(_process_chunk, n, job.fp, self.cfg, self.data_dir, paras, data, cols)
                             proc_inflight += 1
                         except (BrokenProcessPool, RuntimeError, OSError) as exc:
                             no_processes(exc)
