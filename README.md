@@ -351,9 +351,17 @@ The top bar switches between four pages: **Dashboard**, **Graph**, **Nodes** and
 **Timeline**. They share the host / user / agent / conversation filters, the
 **time window**, the tag filter, *Hide ignored*, and all tags and comments. A
 change on one page shows up at once on the others, including in other tabs.
+The side panels are built from the same pieces on every page:
+- the filter sections;
+- the tag chips, where right-clicking a custom tag deletes it;
+- the node-type and layer legends;
+- the severity and category chips;
+- the detail header, with its copy, *show in graph / timeline / Nodes* buttons and chips.
 
-The time window (*From* / *To* in the side rail, or the clock chip on the graph
-page) limits every page to the turns inside it: the graph keeps the turns and
+The same control therefore looks and behaves the same everywhere.
+
+The time window (the clock row under the host / user / agent filters on every
+page: open it for *From* / *To*) limits every page to the turns inside it: the graph keeps the turns and
 the terms mentioned in them, the Nodes table counts mentions inside it, and the
 Timeline and Security lists keep what happened in it. The pages also take the
 window and filters as URL parameters, which is how the dashboard's links work:
@@ -406,9 +414,9 @@ The corpus at a glance, for the scope and time window you have set.
 | Where | What it does |
 |---|---|
 | **Graph** | Click a node to list every paragraph it appears in (or jump straight to it if there's only one). Hovering a node shows the paragraph with the word highlighted. Double-click a node to zoom to it; double-click a conversation's thread (the line from turn to turn) to clear the selection and show only that conversation. |
-| **Selecting several** | <kbd>Ctrl</kbd> / <kbd>⌘</kbd>-click adds a node (or cluster) to the selection or takes it out. <kbd>Shift</kbd>-click selects everything from the last node picked to the one clicked: the turns between them when both are in one conversation, else the shortest path the graph draws. The selection card lists them and tags them all (*Tag*, or right-click one of them); the Matches tab lists their paragraphs. <kbd>S</kbd> (or *Shared*) then selects what they have in common: the terms two sessions both mention, the turns that mention two terms, the terms that link two host clusters, and so on. |
+| **Selecting several** | <kbd>Ctrl</kbd> / <kbd>⌘</kbd>-click adds a node (or cluster) to the selection or takes it out. <kbd>Shift</kbd>-click selects everything from the last node picked to the one clicked: the turns between them when both are in one conversation, else the shortest path the graph draws. The selection card lists them and tags them all: its tag chips work like the Nodes and Timeline bulk bar (click to tag every one, again to untag). Right-clicking one of them works too. The Matches tab lists their paragraphs. <kbd>S</kbd> (or *Shared*) then selects what they have in common: the terms two sessions both mention, the turns that mention two terms, the terms that link two host clusters, and so on. |
 | **Top search** | Searches words across all visible transcripts (plain text or `/regex/i`). Matching nodes get a halo, everything else fades, and the Matches tab lists the hits. Press <kbd>Enter</kbd> to zoom to them and <kbd>/</kbd> to focus the search box. |
-| **Conversations panel** | **Host / user / agent filters** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
+| **Conversations panel** | **Host / user / agent filters** and the **time window** narrow the whole workspace (graph, transcript, findings, and the Nodes and Timeline pages). Below them, a tree of host › user › harness › conversation: checkboxes toggle visibility per conversation or per group. Its own search box counts matching paragraphs per conversation; the filter button shows only those conversations. Clicking a conversation opens its transcript and fits the graph to it. |
 | **Conversation chips** | Under the conversation picker: host, user, agent, model, file, plus the channel, session key, working directory, git branch, sub-agent and deleted/reset state when the agent recorded them. Click one to filter: host, user and agent narrow the scope, the file shows only this session, and the model or any other chip shows every session with the same value (*Undo* in the snackbar). |
 | **Transcript / Matches** | Shows the full conversation (user bubbles, italic dashed thoughts, tool-call cards with arguments, collapsible results) or the matching paragraphs. **# before / # after** set how many paragraphs of context surround each match. Underlined words are extracted entities; clicking one selects its node. Each turn and each match has a timeline button that opens its row on the Timeline page. |
 | **Security tab** | Findings grouped by severity and category, each with its `source → action → sink` chain and where it happened. Click one to jump to the turn. **Flagged** (graph toolbar) fades everything without a finding; flagged nodes carry a severity ring and dataflow edges are drawn bold. |
@@ -421,7 +429,7 @@ The corpus at a glance, for the scope and time window you have set.
 | **Node types** | Legend and filter: click a type to show or hide it, or use its **only** button (see below). Showing a type alone also turns its layer back on. |
 | **Only** | Every chip filter works the same way, on every page: node types, layers, tags, finding categories, IOC / keyword lists, the *Shared across* hosts / users / agents, and the multiple-choice fields in Settings. Click a chip to turn it on or off. Its **only** button, over the count on hover (or a shift-click), keeps just that one; on a chip already kept alone it reads **all** and brings them all back. |
 | **Export** | Standalone **pyvis HTML** (works offline), **GraphML** (Gephi / yEd / Cytoscape) or a PNG of the current view. |
-| **Open in Nodes** | The selection card's table button opens the selected node in the Nodes page. |
+| **Selection card** | The same header as the detail pane of the Nodes and Timeline pages. It shows the node's type, mentions, paragraphs, links and conversations, its findings (click one to open the turn), and its tags and comment. The small buttons after the title copy the label, open the turn on the Timeline, or open the node in the Nodes page. |
 | **Settings** (⚙) | Knobs for extraction, text sources, custom vocabularies/patterns, graph content, edges, security analysis (including an analyst **watchlist** of your own patterns), physics, appearance, the transcript panel and every colour. Each setting shows whether changing it re-analyses the transcripts, rebuilds the graph, or applies instantly. |
 
 ![Selecting a node](docs/selection.jpg)
@@ -965,8 +973,8 @@ The front end is plain HTML/CSS/JS in `src/synthsift/static/`, with no build
 step. Fonts (Roboto, Roboto Mono, Material Symbols) and vis-network are served
 locally, so the app works offline.
 
-Shared building blocks live in `static/js/common.js` (`SS`); use them rather
-than building your own:
+Shared building blocks live in `static/js/common.js` (`SS`) and
+`static/js/panels.js` (`SS.panels`). Use them rather than building your own:
 
 | Building block | Use it for |
 |---|---|
@@ -977,6 +985,12 @@ than building your own:
 | `SS.snack(text, action)` | short messages with an optional *Undo* (the bar is created on first use) |
 | `SS.placeNear(el, x, y, { bounds })` | tooltips and other boxes next to the pointer |
 | `model.newTag()`, `model.bulkMenu()`, `model.itemMenu()` | creating tags, tagging many items, the right-click menu |
+| `model.findings()`, `model.findingsForNode(id)`, `model.findingsForEvent(id)` | findings, indexed once per payload |
+| `SS.panels(state, model, hooks)` → `P.section({ icon, title, count, actions, body })` | every side-panel section: the graph's drawer and the filter rails |
+| `P.scope(el)`, `P.tagFilter(el)`, `P.tagActions()`, `P.tagCoverage(targets)` | host / user / agent / conversation filters and time window; tag filter chips; new / clear tag; tri-state chips that tag many items |
+| `P.kindLegend(el, …)`, `P.layerChips(el, …)`, `P.sevChips(counts, …)`, `P.catChips(el, …)` | node-type and layer legends, severity and finding-category chips |
+| `P.head({ icon, title, chips, copy, graph, timeline, nodes, actions, onClose })`, `P.nodeChips(n, …)` | detail headers: the graph's selection card and the detail panes |
+| `P.findingsSection(fs, …)`, `P.annotationSection(target)`, `P.convFacts(c)` | the findings, tags and comment, and session facts of a detail view |
 
 ## Credits & licences
 

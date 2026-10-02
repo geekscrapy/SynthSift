@@ -12,6 +12,7 @@
 (() => {
   const { store, el, icon, snack, debounce, fmt, plural } = SS;
   const W = WS.W;
+  const UI = WS.P; // shared panel pieces
   const $ = (id) => document.getElementById(id);
   const CHUNK = 200; // rows added per scroll step
 
@@ -67,7 +68,7 @@
     r.tags = [...new Set([...own, ...session])];
     r.inherited = new Set(session.filter((t) => !own.includes(t)));
     r.comment = (WS.annOf(r.target) || {}).comment || "";
-    r.findings = W.findingsByEvent.get(r.ev.id) || [];
+    r.findings = WS.findingsForEvent(r.ev.id);
     r.severity = SS.worstSeverity(r.findings);
   }
 
@@ -225,17 +226,11 @@
   function buildRail() {
     $("rail").replaceChildren(
       WS.scopeSection(resetFilters),
-      el("div", { class: "rail-section" },
-        WS.tagsHeading(),
-        el("div", { class: "chip-row", id: "tagf" }),
-        el("div", { class: "chip-row", style: { marginTop: "6px" } }, el("button", { id: "commented", onclick: () => { P.commentedOnly = !P.commentedOnly; changed(); } }))),
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("swap_vert", "xs"), "Order"),
-        el("div", { class: "segmented sm", id: "order", role: "group", "aria-label": "Order" })));
+      WS.tagsSection(el("div", { class: "chip-row", style: { marginTop: "6px" } }, el("button", { id: "commented", onclick: () => { P.commentedOnly = !P.commentedOnly; changed(); } }))),
+      UI.section({ icon: "swap_vert", title: "Order", body: el("div", { class: "segmented sm", id: "order", role: "group", "aria-label": "Order" }) }));
   }
   function renderRail() {
     WS.renderScope();
-    WS.renderTagFilter($("tagf"));
     const cm = $("commented");
     cm.className = `chip sm${P.commentedOnly ? " selected" : ""}`;
     cm.replaceChildren(icon("comment", "xs"), "With comments only");

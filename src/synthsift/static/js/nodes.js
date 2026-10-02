@@ -15,6 +15,7 @@
 (() => {
   const { store, el, icon, snack, debounce, fmt, plural } = SS;
   const W = WS.W;
+  const UI = WS.P; // shared panel pieces
   const $ = (id) => document.getElementById(id);
 
   const P = {
@@ -236,40 +237,27 @@
     sm.addEventListener("input", debounce(() => { P.shared.min = Math.max(2, Number(sm.value) || 2); if (P.shared.by) changed(); else save(); }, 200));
     $("rail").replaceChildren(
       WS.scopeSection(resetFilters),
-      el("div", { class: "rail-section" },
-        WS.tagsHeading(),
-        el("div", { class: "chip-row", id: "tagf" }),
-        el("div", { class: "segmented sm", id: "tagmode", role: "group", "aria-label": "Tag state", style: { marginTop: "8px" } })),
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("shield", "xs"), "Security"),
-        el("div", { class: "field-row" }, sev),
-        el("div", { class: "chip-row", id: "cats" })),
-      el("div", { class: "rail-section hidden", id: "lists-sec" },
-        el("h3", {}, icon("playlist_add_check", "xs"), "Lists", el("a", { href: "/settings#modules", title: "Manage IOC / keyword lists" }, "Manage")),
-        el("div", { class: "chip-row", id: "listf" })),
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("category", "xs"), "Node types", el("button", { onclick: () => { P.hiddenKinds.clear(); P.hiddenLayers.clear(); changed(); } }, "Show all")),
-        el("div", { class: "chip-row", id: "layers" }), el("div", { id: "kinds", style: { marginTop: "6px" } })),
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("join_inner", "xs"), "Shared across",
-          el("button", { id: "shared-clear", onclick: () => { P.shared = noShared(); changed(); } }, "Clear")),
-        el("div", { class: "segmented sm", id: "shared-by", role: "group", "aria-label": "Shared across" }),
-        el("label", { class: "field-row", id: "shared-min-row", style: { marginTop: "8px" } },
-          el("span", { class: "grow" }, "Seen in at least"), sm, el("span", { id: "shared-unit", class: "muted" })),
-        el("div", { class: "chip-row", id: "shared-vals", style: { marginTop: "6px" } }),
-        el("p", { class: "hint", id: "shared-hint" })),
-      el("div", { class: "rail-section" },
-        el("h3", {}, icon("tag", "xs"), "Terms"),
-        el("label", { class: "field-row" }, el("span", { class: "grow" }, "Minimum mentions"), mm)));
+      WS.tagsSection(el("div", { class: "segmented sm", id: "tagmode", role: "group", "aria-label": "Tag state", style: { marginTop: "8px" } })),
+      UI.section({ icon: "shield", title: "Security", body: [el("div", { class: "field-row" }, sev), el("div", { class: "chip-row", id: "cats" })] }),
+      UI.section({ icon: "playlist_add_check", title: "Lists", id: "lists-sec", cls: "hidden",
+        actions: [{ label: "Manage", href: "/settings#modules", title: "Manage IOC / keyword lists" }], body: el("div", { class: "chip-row", id: "listf" }) }),
+      UI.section({ icon: "category", title: "Node types", actions: [{ label: "Show all", id: "kinds-reset", run: () => { P.hiddenKinds.clear(); P.hiddenLayers.clear(); changed(); } }],
+        body: [el("div", { class: "chip-row", id: "layers" }), el("div", { id: "kinds", style: { marginTop: "6px" } })] }),
+      UI.section({ icon: "join_inner", title: "Shared across", actions: [{ label: "Clear", id: "shared-clear", run: () => { P.shared = noShared(); changed(); } }],
+        body: [el("div", { class: "segmented sm", id: "shared-by", role: "group", "aria-label": "Shared across" }),
+          el("label", { class: "field-row", id: "shared-min-row", style: { marginTop: "8px" } },
+            el("span", { class: "grow" }, "Seen in at least"), sm, el("span", { id: "shared-unit", class: "muted" })),
+          el("div", { class: "chip-row", id: "shared-vals", style: { marginTop: "6px" } }),
+          el("p", { class: "hint", id: "shared-hint" })] }),
+      UI.section({ icon: "tag", title: "Terms", body: el("label", { class: "field-row" }, el("span", { class: "grow" }, "Minimum mentions"), mm) }));
   }
 
   function renderRail({ kindCounts, layerCounts, catCounts, listCounts }) {
     WS.renderScope();
-    WS.renderTagFilter($("tagf"));
     $("tagmode").replaceChildren(...TAG_MODES.map(([k, label]) => el("button", {
       class: P.tagMode === k ? "on" : "", onclick: () => { P.tagMode = k; changed(); },
     }, label)));
-    WS.renderCatChips($("cats"), catCounts, P.secCats, changed);
+    UI.catChips($("cats"), { counts: catCounts, selected: P.secCats, onChange: changed });
     renderShared();
     const lists = [...new Set([...listCounts.keys(), ...P.lists])].sort();
     $("lists-sec").classList.toggle("hidden", !lists.length);
@@ -277,34 +265,8 @@
       key: l, label: `“${l}”`, set: P.lists, title: `Only terms on “${l}”`, onChange: () => changed(),
       children: [el("span", { class: "label" }, l), el("span", { class: "count" }, fmt(listCounts.get(l) || 0))],
     })));
-    $("layers").replaceChildren(...SS.LAYERS.map((l) => SS.onlyChip({
-      key: l.key, label: `the ${l.label.toLowerCase()} layer`, set: P.hiddenLayers, keys: SS.LAYERS.map((x) => x.key), mode: "hide",
-      onCls: " selected", offCls: " off", title: `Show / hide the ${l.label.toLowerCase()} layer`,
-      onChange: (isolated) => { if (isolated) P.hiddenKinds.clear(); changed(); }, // a layer shown alone shows all of itself
-      children: [icon(P.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "xs"), l.label, el("span", { class: "count" }, fmt(layerCounts.get(l.key) || 0))],
-    })));
-    const groups = new Map();
-    for (const [key, n] of kindCounts) {
-      const g = WS.kindGroup(key);
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push({ ...W.kinds.get(key), key, n });
-    }
-    for (const key of P.hiddenKinds) { // keep hidden kinds visible so they can be switched back on
-      if (kindCounts.has(key) || !W.kinds.has(key)) continue;
-      const g = WS.kindGroup(key);
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push({ ...W.kinds.get(key), key, n: 0 });
-    }
-    $("kinds").replaceChildren(...[...groups.keys()].sort((a, b) => SS.KIND_GROUPS.indexOf(a) - SS.KIND_GROUPS.indexOf(b)).map((g) => {
-      const items = groups.get(g).sort((a, b) => b.n - a.n);
-      const allOn = items.every((i) => !P.hiddenKinds.has(i.key));
-      return el("div", { class: "rail-group" },
-        el("h4", {}, g, el("button", { onclick: () => { for (const i of items) allOn ? P.hiddenKinds.add(i.key) : P.hiddenKinds.delete(i.key); changed(); } }, allOn ? "hide all" : "show all")),
-        el("div", { class: "chip-row" }, items.map((i) => SS.kindChip(i, P.hiddenKinds, [...W.kinds.keys()], (isolated) => {
-          if (isolated) P.hiddenLayers.clear(); // a type shown alone must not sit on a hidden layer
-          changed();
-        }))));
-    }));
+    UI.layerChips($("layers"), { counts: layerCounts, hidden: P.hiddenLayers, onChange: (isolated) => { if (isolated) P.hiddenKinds.clear(); changed(); } }); // a layer shown alone shows all of itself
+    UI.kindLegend($("kinds"), { counts: kindCounts, hidden: P.hiddenKinds, onChange: (isolated) => { if (isolated) P.hiddenLayers.clear(); changed(); } }); // a type shown alone must not sit on a hidden layer
     $("reset").classList.toggle("hidden", !filtersActive());
   }
 

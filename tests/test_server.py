@@ -22,7 +22,7 @@ def test_end_to_end(tmp_path, sample_zip):
     for page in ("/", "/dashboard", "/settings", "/nodes", "/timeline"):
         r = client.get(page)
         assert r.status_code == 200 and "<title>SynthSift" in r.text
-    for asset in ("common.js", "workspace.js", "dashboard.js", "nodes.js", "timeline.js", "app.js"):
+    for asset in ("common.js", "panels.js", "workspace.js", "dashboard.js", "nodes.js", "timeline.js", "app.js"):
         assert client.get(f"/static/js/{asset}").status_code == 200
     assert client.get("/vendor/vis/vis-network.min.js").status_code == 200
 

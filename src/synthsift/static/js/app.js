@@ -3,7 +3,7 @@
 
 (() => {
   const { store, api, esc, el, icon, snack, debounce, fmt, plural, fmtTime, makeRegex, closeMenus } = SS;
-  const { SEV_ORDER, SEV_COLOR, sevRank, LAYERS, kindKey } = SS;
+  const { SEV_COLOR, sevRank, kindKey } = SS;
   const $ = (id) => document.getElementById(id);
 
   const S = {
@@ -69,7 +69,18 @@
   // lookups and analyst tags / comments, shared with the Nodes and Timeline pages
   const M = SS.model(S, { onSaved: () => { afterAnnotationChange(); broadcast({ type: "annotations" }); } });
   const { kind, kindOf, convMatchesFilter, convVisible, windowOn, inWindow, paraVisible, nodeInWindow, targetOf, annOf, tagsFor, tagInfo, nodeTags,
-    loadAnnotations, tagChipsHTML } = M;
+    loadAnnotations, tagChipsHTML, findingsForNode, findingsForEvent } = M;
+  // the panel pieces every view shares (sections, scope, tag filter, legends, detail headers)
+  let shownHideIgnored = S.hideIgnored;
+  const P = SS.panels(S, M, {
+    setFilter: (patch) => setConvFilter(SS.narrowScope(S.filter, patch)),
+    onTagFilter: () => {
+      if (S.hideIgnored !== shownHideIgnored) { shownHideIgnored = S.hideIgnored; applyFilters(); }
+      afterTagFilter();
+    },
+    afterTagsChanged: () => { afterAnnotationChange(); broadcast({ type: "annotations" }); },
+    newTag: () => M.newTag(),
+  });
   const chan = "BroadcastChannel" in window ? new BroadcastChannel("synthsift") : null;
   const WIN_ID = Math.random().toString(36).slice(2);
 
@@ -83,6 +94,7 @@
   /* ================================================================ boot */
   async function boot() {
     if (S.panelOnly) { document.body.classList.add("panel-only"); document.title = "SynthSift – transcript"; }
+    buildDrawer();
     wireUI();
     try {
       const st = await api("/api/settings");
@@ -1531,21 +1543,12 @@
     return true;
   }
 
-  function findingsForNode(id) {
-    const fs = (S.data && S.data.findings) || [];
-    const n = S.nodes.get(id);
-    if (!n) return [];
-    if (n.type === "entity") {
-      const key = id.replace(/^ent:/, "");
-      return fs.filter((f) => f.entities.includes(key) || f.chain.some((c) => c[0] === key || c[2] === key));
-    }
-    if (n.type === "conversation") return fs.filter((f) => f.conv === n.conv[0]);
-    const ev = n.type === "tool_arg" ? n.event : id;
-    return fs.filter((f) => f.event === ev);
+  /** the turn's row on the timeline (a popped-out transcript keeps its window) */
+  function openTimeline(evId) {
+    const url = SS.pageURL("/timeline", { select: "event:" + evId });
+    if (S.panelOnly) window.open(url); else location.href = url;
   }
-  function findingsForEvent(evId) {
-    return ((S.data && S.data.findings) || []).filter((f) => f.event === evId);
-  }
+  const openNodes = (id) => window.open(SS.pageURL("/nodes", { select: id }), "synthsift-nodes");
 
   function renderSelection() {
     const box = $("selection");
@@ -1556,37 +1559,25 @@
     if (!n) { box.classList.add("hidden"); box.replaceChildren(); return; }
     const k = kindOf(n);
     const convs = (n.conv || []).map((c) => S.convs.get(c)).filter(Boolean);
-    const sub = el("div", { class: "sub" }, el("span", { class: "tag" }, k.label));
-    if (n.type === "entity") sub.append(el("span", { class: "tag" }, plural(n.count, "mention")));
-    for (const l of n.labels || []) sub.append(el("span", { class: "tag warn", title: "On an IOC / keyword list" }, icon("playlist_add_check", "xs"), l));
-    const pidCount = new Set(visibleOcc(n).map((o) => o[0])).size;
-    sub.append(el("span", { class: "tag" }, plural(pidCount, "paragraph")));
-    sub.append(el("span", { class: "tag" }, plural(convs.length, "conversation")));
-    sub.append(el("span", { class: "tag" }, plural(S.neighbors.size - 1, "link")));
-    const body = el("div", { class: "grow" }, el("div", { class: "title" }, n.label), sub);
+    const evId = n.type === "tool_arg" ? n.event : S.events.has(n.id) ? n.id : null;
+    const head = P.head({
+      icon: k.icon, color: P.nodeColor(n), title: n.label, copy: n.label,
+      chips: P.nodeChips(n, { paragraphs: new Set(visibleOcc(n).map((o) => o[0])).size, links: S.neighbors.size - 1, convs: convs.length }),
+      timeline: evId ? () => openTimeline(evId) : null, nodes: () => openNodes(n.id),
+      actions: [{ icon: "center_focus_strong", title: "Centre in graph", run: () => focusNode(n.id) }], onClose: clearSelection,
+    });
+    const body = el("div", { class: "detail-body" });
     if (n.type === "tool_call") {
       const ev = S.events.get(n.event);
       if (ev) body.append(el("div", { class: "args" }, ev.p.map((pid) => S.paras.get(pid).t).join("\n")));
     }
-    // security findings touching this node
-    const fs = findingsForNode(n.id);
-    if (fs.length) {
-      body.append(el("div", { class: "sel-findings" }, fs.slice(0, 6).map((f) =>
-        el("div", { class: `f sev-${f.severity}` }, el("span", { class: "sev-chip" }, f.severity), el("span", {}, f.label + " – " + f.detail)))));
-    }
-    const ann = M.annotationView(targetOf(n.id));
-    if (ann) body.append(ann);
-    box.replaceChildren(
-      el("span", { class: "ico", style: { background: n.type === "conversation" && convs[0] ? convs[0].color : k.color } }, icon(k.icon)),
-      body,
-      el("div", {},
-        el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => focusNode(n.id) }, icon("center_focus_strong", "sm")),
-        el("a", { class: "icon-btn sm", title: "Open in the Nodes table", href: `/nodes?select=${encodeURIComponent(n.id)}`, target: "synthsift-nodes" }, icon("table_rows", "sm")),
-        el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
+    body.append(...P.findingsSection(findingsForNode(n.id), { limit: 3, withConv: n.type === "entity" || n.type === "tool_hub", onOpen: (f) => jumpToEvent(f.event) }),
+      ...P.annotationSection(targetOf(n.id)));
+    box.replaceChildren(head, ...(body.childNodes.length ? [body] : []));
     box.classList.remove("hidden");
   }
 
-  /** several nodes selected together: what they are, and tag / shared / clear */
+  /** several nodes selected together: what they are, tag them all, select what they share */
   function renderPickedSelection(box) {
     const ids = [...S.picked];
     const byKind = new Map();
@@ -1600,34 +1591,29 @@
       return el("button", { class: "chip sm", title: "Centre in graph", onclick: () => focusNode(x) },
         el("span", { class: "swatch", style: { background: k.color } }), el("span", { class: "label" }, n ? n.label : c ? c.label : x));
     };
-    const tagBtn = el("button", { class: "btn tonal sm", title: "Tag every selected node (or right-click one of them)",
-      onclick: () => { const r = tagBtn.getBoundingClientRect(); M.bulkMenu(r.left, r.bottom + 4, pickedTargets); } }, icon("sell"), "Tag");
-    const body = el("div", { class: "grow" },
-      el("div", { class: "title" }, plural(ids.length, "node") + " selected"),
-      el("div", { class: "sub" }, ...[...byKind].map(([k, n]) => el("span", { class: "tag" }, `${fmt(n)} ${k}`))),
-      el("div", { class: "chip-row picked-list" }, ids.slice(0, 40).map(chip), ids.length > 40 ? el("span", { class: "muted" }, `+ ${fmt(ids.length - 40)} more`) : null),
-      el("div", { class: "chip-row", style: { marginTop: "10px" } }, tagBtn,
-        el("button", { class: "btn text sm", title: "Select what they have in common (S)", onclick: selectShared }, icon("join_inner"), "Shared")));
-    box.replaceChildren(el("span", { class: "ico", style: { background: "var(--primary)" } }, icon("select_all")), body,
-      el("div", {}, el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
+    const targets = pickedTargets();
+    box.replaceChildren(
+      P.head({ icon: "select_all", color: "var(--primary)", title: plural(ids.length, "node") + " selected",
+        chips: [...byKind].map(([k, n]) => P.tag(`${fmt(n)} ${k}`)), onClose: clearSelection,
+        actions: [{ icon: "join_inner", title: "Select what they have in common (S)", run: selectShared }] }),
+      el("div", { class: "detail-body" },
+        el("div", { class: "chip-row picked-list" }, ids.slice(0, 40).map(chip), ids.length > 40 ? el("span", { class: "muted" }, `+ ${fmt(ids.length - 40)} more`) : null),
+        targets.length ? el("h4", {}, icon("sell", "xs"), "Tag all", el("span", { class: "count" }, fmt(targets.length))) : null,
+        targets.length ? el("div", { class: "chip-row" }, ...P.tagCoverage(pickedTargets)) : null));
     box.classList.remove("hidden");
   }
 
   function renderClusterSelection(box, c) {
-    const sub = el("div", { class: "sub" }, el("span", { class: "tag" }, `${c.mode} cluster`), el("span", { class: "tag" }, plural(c.count, "node")),
-      el("span", { class: "tag" }, plural(c.convs.length, "conversation")), el("span", { class: "tag" }, plural(S.neighbors.size - 1, "link")),
-      c.sev ? el("span", { class: `sev-${c.sev}`, title: "Highest finding inside" }, el("span", { class: "sev-chip" }, c.sev)) : null);
-    const body = el("div", { class: "grow" }, el("div", { class: "title" }, c.label), sub,
-      c.tags.length ? el("div", { class: "tag-row", style: { marginTop: "6px" }, html: tagChipsHTML(c.tags) }) : null,
-      el("div", { class: "chip-row", style: { marginTop: "10px" } },
-        el("button", { class: "btn tonal sm", title: "Filter the workspace to this cluster (or double-click it)", onclick: () => focusCluster(c.id) }, icon("zoom_in"), "Dive in"),
-        el("button", { class: "btn text sm", title: "Show its nodes here, without filtering", onclick: () => expandCluster(c.id) }, icon("open_in_full"), "Expand in place")));
     box.replaceChildren(
-      el("span", { class: "ico", style: { background: c.color } }, icon(CLUSTER_ICON[c.mode] || "workspaces")),
-      body,
-      el("div", {},
-        el("button", { class: "icon-btn sm", title: "Centre in graph", onclick: () => network.focus(c.id, { scale: Math.max(network.getScale(), 0.6), animation: { duration: 450 } }) }, icon("center_focus_strong", "sm")),
-        el("button", { class: "icon-btn sm", title: "Clear selection", onclick: clearSelection }, icon("close", "sm"))));
+      P.head({ icon: CLUSTER_ICON[c.mode] || "workspaces", color: c.color, title: c.label, onClose: clearSelection,
+        chips: [P.tag(`${c.mode} cluster`), P.tag(plural(c.count, "node")), P.tag(plural(c.convs.length, "conversation")), P.tag(plural(S.neighbors.size - 1, "link")),
+          c.sev ? el("span", { class: `sev-${c.sev}`, title: "Highest finding inside" }, el("span", { class: "sev-chip" }, c.sev)) : null],
+        actions: [{ icon: "center_focus_strong", title: "Centre in graph", run: () => network.focus(c.id, { scale: Math.max(network.getScale(), 0.6), animation: { duration: 450 } }) }] }),
+      el("div", { class: "detail-body" },
+        c.tags.length ? el("div", { class: "tag-row", html: tagChipsHTML(c.tags) }) : null,
+        el("div", { class: "chip-row", style: { marginTop: "8px" } },
+          el("button", { class: "btn tonal sm", title: "Filter the workspace to this cluster (or double-click it)", onclick: () => focusCluster(c.id) }, icon("zoom_in"), "Dive in"),
+          el("button", { class: "btn text sm", title: "Show its nodes here, without filtering", onclick: () => expandCluster(c.id) }, icon("open_in_full"), "Expand in place"))));
     box.classList.remove("hidden");
   }
 
@@ -1856,31 +1842,23 @@
   const ignored = (target) => tagsFor(target).includes("ignore");
   const findingInScope = (f) => convVisible(f.conv) && inWindow((S.events.get(f.event) || {}).ts);
   function visibleFindings() {
-    const fs = (S.data && S.data.findings) || [];
     const min = sevRank(S.secMinSev);
-    return fs.map((f, i) => ({ ...f, i })).filter((f) =>
+    return M.findings().filter((f) =>
       findingInScope(f) && sevRank(f.severity) >= min && (!S.secCats.size || S.secCats.has(f.category)) &&
       !(S.hideIgnored && (ignored("event:" + f.event) || ignored("conv:" + f.conv))));
   }
   function renderSecurity() {
     const body = $("panel-body");
     body.scrollTop = 0;
-    const all = (S.data && S.data.findings) || [];
-    const cats = (S.data && S.data.security && S.data.security.categories) || {};
+    const all = M.findings();
+    const cats = P.categories();
     const shown = visibleFindings();
-    const bySev = new Map();
-    for (const f of all) if (findingInScope(f)) bySev.set(f.severity, (bySev.get(f.severity) || 0) + 1);
-    const catCounts = new Map();
-    for (const f of all) if (findingInScope(f)) catCounts.set(f.category, (catCounts.get(f.category) || 0) + 1);
+    const counts = P.findingCounts(all.filter(findingInScope));
+    const catRow = el("div", { class: "chip-row" });
+    P.catChips(catRow, { counts: counts.cat, selected: S.secCats, onChange: () => renderPanel() });
     const toolbar = el("div", { class: "sec-toolbar" },
-      el("div", { class: "sec-summary" }, [...SEV_ORDER].reverse().filter((sv) => bySev.get(sv)).map((sv) => el("button", {
-        class: `chip sm sev-${sv}${S.secMinSev === sv ? " selected" : ""}`, title: `Show ${sv} and above`,
-        onclick: () => { S.secMinSev = sv; store.set("secMinSev", sv); renderPanel(); },
-      }, el("span", { class: "sev-chip" }, sv), el("span", { class: "count" }, fmt(bySev.get(sv)))))),
-      el("div", { class: "chip-row" }, Object.entries(cats).filter(([k]) => catCounts.get(k)).map(([k, label]) => SS.onlyChip({
-        key: k, label, set: S.secCats, title: `Only ${label.toLowerCase()} findings`, onChange: () => renderPanel(),
-        children: [label, el("span", { class: "count" }, fmt(catCounts.get(k)))],
-      }))),
+      P.sevChips(counts.sev, { min: S.secMinSev, onPick: (sv) => { S.secMinSev = sv; store.set("secMinSev", sv); renderPanel(); } }),
+      catRow,
       el("button", { class: `chip sm${S.flaggedOnly ? " selected" : ""}`, onclick: () => setFlaggedOnly(!S.flaggedOnly) },
         icon("shield", "xs"), "Fade unflagged in graph"));
     if (!shown.length) {
@@ -1994,12 +1972,7 @@
     const open = t.closest("[data-open]");
     if (open) { showPara(open.dataset.open); return; }
     const tl = t.closest("[data-timeline]");
-    if (tl) {
-      // the turn's row on the timeline; a popped-out transcript keeps its window
-      const url = SS.pageURL("/timeline", { select: "event:" + tl.dataset.timeline });
-      if (S.panelOnly) window.open(url); else location.href = url;
-      return;
-    }
+    if (tl) { openTimeline(tl.dataset.timeline); return; }
     const jump = t.closest("[data-jump]");
     if (jump) {
       const id = jump.dataset.jump;
@@ -2043,31 +2016,8 @@
   function renderTagChips() {
     const box = $("tag-chips");
     if (!box) return;
-    const counts = new Map();
-    for (const a of Object.values(S.annotations)) for (const t of a.tags) counts.set(t, (counts.get(t) || 0) + 1);
     $("tag-count").textContent = fmt(Object.keys(S.annotations).length);
-    const chips = S.tags.map((t) => SS.onlyChip({
-      key: t.name, label: `“${t.name}”`, set: S.tagFilter, cls: `tagf${counts.get(t.name) ? "" : " muted-chip"}`, style: { "--tag": t.color },
-      title: `Show only items tagged “${t.name}” (graph fades the rest; the Nodes and Timeline pages filter)`,
-      onChange: () => { store.set("tagFilter", [...S.tagFilter]); afterTagFilter(); },
-      attrs: {
-        oncontextmenu: async (e) => {
-          e.preventDefault();
-          if (["bad", "suspicious", "seen", "ignore"].includes(t.name)) return;
-          const yes = await SS.confirmDialog({ title: `Delete the tag “${t.name}”?`, text: "It is removed from every session, turn and term that carries it.",
-            ok: "Delete", danger: true });
-          if (!yes) return;
-          await api(`/api/tags?name=${encodeURIComponent(t.name)}`, { method: "DELETE" });
-          await loadAnnotations(); afterAnnotationChange(); broadcast({ type: "annotations" });
-        },
-      },
-      children: [el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(counts.get(t.name) || 0))],
-    }));
-    chips.push(el("button", {
-      class: `chip sm${S.hideIgnored ? " selected" : ""}`, title: "Hide everything tagged “ignore” from the graph",
-      onclick: () => { S.hideIgnored = !S.hideIgnored; store.set("hideIgnored", S.hideIgnored); applyFilters(); renderTagChips(); },
-    }, icon(S.hideIgnored ? "visibility_off" : "visibility", "xs"), "Hide ignored"));
-    box.replaceChildren(...chips);
+    P.tagFilter(box, { title: "Show only items tagged (the graph fades the rest; Nodes and Timeline filter)" });
   }
   function afterTagFilter() {
     renderTagChips();
@@ -2284,28 +2234,7 @@
 
   function renderFilters() {
     if (!S.data) return;
-    const all = S.convOrder.map((c) => S.convs.get(c));
-    const f = S.filter;
-    const scopes = {
-      host: all,
-      user: all.filter((c) => !f.host || c.host === f.host),
-      harness: all.filter((c) => (!f.host || c.host === f.host) && (!f.user || c.user === f.user)),
-    };
-    for (const [key, id, label] of [["host", "f-host", "All hosts"], ["user", "f-user", "All users"], ["harness", "f-harness", "All agents"]]) {
-      const vals = [...new Set(scopes[key].map((c) => c[key]))].sort();
-      if (f[key] && !vals.includes(f[key])) f[key] = "";
-      const sel = $(id);
-      sel.replaceChildren(el("option", { value: "" }, `${label} (${vals.length})`),
-        ...vals.map((v) => el("option", { value: v, selected: f[key] === v }, v)));
-      sel.closest(".mini-select").classList.toggle("active", !!f[key]);
-    }
-    const chip = $("f-conv");
-    if (f.conv && !S.convs.has(f.conv)) f.conv = "";
-    chip.classList.toggle("hidden", !f.conv);
-    if (f.conv) chip.querySelector(".label").textContent = S.convs.get(f.conv).title;
-    const time = $("f-time");
-    time.classList.toggle("hidden", !windowOn());
-    time.querySelector(".label").textContent = SS.fmtRange(f.from, f.to);
+    P.scope($("scope"), { conv: "chip", onClearConv: () => clearClusterFocus("conversation") });
   }
 
   function runConvSearch(q) {
@@ -2335,40 +2264,40 @@
       const k = kindKey(n);
       counts.set(k, (counts.get(k) || 0) + 1);
     }
-    const groups = new Map();
-    for (const [key, n] of counts) {
-      const k = kind(key);
-      const g = M.kindGroup(key);
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push({ ...k, key, n });
-    }
-    const frag = document.createDocumentFragment();
-    for (const g of [...groups.keys()].sort((a, b) => SS.KIND_GROUPS.indexOf(a) - SS.KIND_GROUPS.indexOf(b))) {
-      const items = groups.get(g).sort((a, b) => b.n - a.n);
-      const allOn = items.every((i) => !S.hiddenKinds.has(i.key));
-      frag.append(el("div", { class: "legend-group" },
-        el("h4", {}, g, el("button", { onclick: () => { for (const i of items) allOn ? S.hiddenKinds.add(i.key) : S.hiddenKinds.delete(i.key); afterKindToggle(); } }, allOn ? "hide all" : "show all")),
-        el("div", { class: "chip-row" }, items.map((i) => SS.kindChip(i, S.hiddenKinds, [...counts.keys()], (isolated) => {
-          if (isolated) S.hiddenLayers.clear(); // a type shown alone must not sit on a hidden layer
-          afterKindToggle();
-        })))));
-    }
-    $("legend").replaceChildren(frag);
+    P.kindLegend($("legend"), { counts, hidden: S.hiddenKinds, onChange: (isolated) => {
+      if (isolated) S.hiddenLayers.clear(); // a type shown alone must not sit on a hidden layer
+      afterKindToggle();
+    } });
   }
   function afterKindToggle() { applyFilters(); renderLegend(); renderLayers(); if (S.tab === "transcript") renderPanel(); }
 
   function renderLayers() {
     const counts = new Map();
     for (const id of S.visibleNodes) { const l = S.nodes.get(id).layer; counts.set(l, (counts.get(l) || 0) + 1); }
-    $("layers").replaceChildren(...LAYERS.map((l) => SS.onlyChip({
-      key: l.key, label: `the ${l.label.toLowerCase()} layer`, set: S.hiddenLayers, keys: LAYERS.map((x) => x.key), mode: "hide",
-      onCls: " selected", offCls: "", small: false, title: `Show / hide the ${l.label.toLowerCase()} layer`,
-      onChange: (isolated) => {
-        if (isolated) S.hiddenKinds.clear(); // a layer shown alone shows all of itself
-        applyFilters(); renderLayers(); renderLegend();
-      },
-      children: [icon(S.hiddenLayers.has(l.key) ? "visibility_off" : l.icon, "sm"), l.label, el("span", { class: "count" }, fmt(counts.get(l.key) || 0))],
-    })));
+    P.layerChips($("layers"), { counts, hidden: S.hiddenLayers, small: false, onChange: (isolated) => {
+      if (isolated) S.hiddenKinds.clear(); // a layer shown alone shows all of itself
+      applyFilters(); renderLayers(); renderLegend();
+    } });
+  }
+
+  /** the left drawer: conversations (scope, search, tree), tags and node types, then the stats */
+  function buildDrawer() {
+    $("left").replaceChildren(
+      P.section({ cls: "conv-section", icon: "forum", title: "Conversations", countId: "conv-count", actions: [
+        { icon: "check_box", id: "conv-all", title: "Show all conversations" },
+        { icon: "check_box_outline_blank", id: "conv-none", title: "Hide all conversations" },
+        { icon: "unfold_less", id: "conv-expand", title: "Expand / collapse all" }],
+      body: [el("div", { id: "scope" }),
+        el("label", { class: "search compact" }, icon("travel_explore", "sm"),
+          el("input", { id: "conv-q", type: "search", placeholder: "Find conversations containing…", autocomplete: "off" }),
+          el("button", { class: "icon-btn sm hidden", id: "conv-only", title: "Show only matching conversations in the graph" }, icon("filter_list"))),
+        el("div", { class: "tree", id: "tree" })] }),
+      P.section({ cls: "tags-section", icon: "sell", title: "Tags", countId: "tag-count",
+        actions: P.tagActions({ onNew: () => { renderTagChips(); renderSelection(); broadcast({ type: "annotations" }); } }),
+        body: el("div", { class: "chip-row tag-chips", id: "tag-chips" }) }),
+      P.section({ cls: "legend-section", icon: "category", title: "Node types",
+        actions: [{ icon: "restart_alt", id: "legend-reset", title: "Show all types" }], body: el("div", { class: "legend", id: "legend" }) }),
+      el("div", { class: "drawer-foot" }, el("div", { class: "stats", id: "stats" }), el("ul", { class: "warn-list", id: "warnings" })));
   }
 
   function renderStats(st) {
@@ -2560,16 +2489,8 @@
       }
       else if (e.key === "f" && network) network.fit({ animation: { duration: 400 } });
     });
-    // host / user / agent filters
-    for (const [key, id] of [["host", "f-host"], ["user", "f-user"], ["harness", "f-harness"]]) {
-      $(id).addEventListener("change", (e) => setConvFilter(SS.narrowScope(S.filter, { [key]: e.target.value })));
-    }
     // right-click on the graph opens the item menu (see "oncontext"), not the browser's
     $("graph").addEventListener("contextmenu", (e) => e.preventDefault());
-    $("tag-new").addEventListener("click", async () => {
-      if (await M.newTag()) { renderTagChips(); renderSelection(); broadcast({ type: "annotations" }); }
-    });
-    $("tag-clear").addEventListener("click", () => { S.tagFilter.clear(); store.set("tagFilter", []); afterTagFilter(); });
     $("t-flagged").addEventListener("click", () => setFlaggedOnly(!S.flaggedOnly));
     $("cluster-mode").value = S.clusterMode || "auto";
     $("cluster-mode").addEventListener("change", (e) => {
@@ -2579,8 +2500,6 @@
       if (!S.clusters.size) settleLayout();
       renderStats(S.data && S.data.stats);
     });
-    $("f-conv").addEventListener("click", () => clearClusterFocus("conversation"));
-    $("f-time").addEventListener("click", () => setConvFilter({ ...S.filter, from: "", to: "" }));
     $("btn-dock").addEventListener("click", (e) => { e.stopPropagation(); dockMenu(e.currentTarget); });
     $("popped-note").addEventListener("click", dockBack);
     window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

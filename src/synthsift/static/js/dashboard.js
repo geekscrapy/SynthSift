@@ -500,8 +500,8 @@
   /* ================================================================ boot */
   function buildRail() {
     $("rail").replaceChildren(WS.scopeSection(() => WS.resetScope()),
-      el("div", { class: "rail-section" }, el("h3", {}, icon("info", "xs"), "About"),
-        el("p", { class: "rail-note" }, "Every number, bar and row opens the matching Graph, Nodes or Timeline view. Drag across the charts to narrow the time window; the scope and time window apply to every page.")));
+      WS.P.section({ icon: "info", title: "About",
+        body: el("p", { class: "rail-note" }, "Every number, bar and row opens the matching Graph, Nodes or Timeline view. Drag across the charts to narrow the time window; the scope and time window apply to every page.") }));
   }
 
   async function boot() {

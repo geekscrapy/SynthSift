@@ -888,7 +888,37 @@ const SS = (() => {
       placeMenu(menu, x, y);
     }
 
-    /* findings */
+    /* findings, indexed per turn and per entity node (an entity is resolved the way the graph builder does: one
+       node for the corpus, or one per conversation). Built on first use after a payload is loaded. */
+    let fx = null;
+    function findingIndex() {
+      const all = (G.data && G.data.findings) || [];
+      if (fx && fx.all === all) return fx;
+      const byEvent = new Map(), byNode = new Map();
+      const add = (m, k, f) => { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(f)) m.get(k).push(f); };
+      all.forEach((f, i) => {
+        f.i = i;
+        add(byEvent, f.event, f);
+        for (const key of new Set([...f.entities, ...f.chain.flatMap((c) => [c[0], c[2]])])) {
+          const id = G.nodes.has("ent:" + key) ? "ent:" + key : "ent:" + f.conv + ":" + key;
+          if (G.nodes.has(id)) add(byNode, id, f);
+        }
+      });
+      return (fx = { all, byEvent, byNode });
+    }
+    /** every finding (each carries its index `i` in the payload) */
+    const findings = () => findingIndex().all;
+    const findingsForEvent = (evId) => findingIndex().byEvent.get(evId) || [];
+    /** findings that touch a node: an entity's, a conversation's, a tool's (hub), or a turn's (a tool argument: its call's) */
+    function findingsForNode(id) {
+      const n = G.nodes.get(id);
+      if (!n) return [];
+      if (n.type === "entity") return findingIndex().byNode.get(id) || [];
+      if (n.type === "conversation") return findings().filter((f) => f.conv === n.conv[0]);
+      if (n.type === "tool_hub") return findings().filter((f) => (G.nodes.get(f.event) || {}).tool === n.label);
+      return findingsForEvent(n.type === "tool_arg" ? n.event : id);
+    }
+
     function endpointLabel(key) {
       const n = G.nodes.get("ent:" + key);
       if (n) return n.label;
@@ -921,7 +951,7 @@ const SS = (() => {
       kind, kindOf, kindGroup, avatarHTML, convMatchesFilter, convVisible, windowOn, inWindow, eventVisible, paraVisible, nodeInWindow,
       targetOf, annOf, tagsFor, tagInfo, nodeTags, seenRange, labelFor, convFor, tsFor,
       loadAnnotations, putAnnotation, toggleTag, newTag, coverage, bulkTag, bulkMenu, sharedNodes, tagChipsHTML, annotationView, itemMenu,
-      endpointLabel, chainEl, findingWhere, findingCard,
+      findings, findingsForEvent, findingsForNode, endpointLabel, chainEl, findingWhere, findingCard,
     };
   }
 

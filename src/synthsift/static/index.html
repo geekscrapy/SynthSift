@@ -43,46 +43,7 @@
   </header>
 
   <main class="layout" id="layout">
-    <aside class="drawer" id="left">
-      <section class="section conv-section">
-        <div class="section-title">
-          <div class="grow">Conversations <span class="badge soft" id="conv-count">0</span></div>
-          <button class="icon-btn sm" id="conv-all" title="Show all conversations"><span class="msi">check_box</span></button>
-          <button class="icon-btn sm" id="conv-none" title="Hide all conversations"><span class="msi">check_box_outline_blank</span></button>
-          <button class="icon-btn sm" id="conv-expand" title="Expand / collapse all"><span class="msi">unfold_less</span></button>
-        </div>
-        <div class="filter-row">
-          <label class="mini-select" title="Filter by host"><span class="msi xs">computer</span><select id="f-host"></select></label>
-          <label class="mini-select" title="Filter by user"><span class="msi xs">person</span><select id="f-user"></select></label>
-          <label class="mini-select" title="Filter by agent / harness"><span class="msi xs">terminal</span><select id="f-harness"></select></label>
-        </div>
-        <button class="chip sm conv-focus hidden" id="f-conv" title="Showing one conversation – click to clear"><span class="msi xs">forum</span><span class="label"></span><span class="msi xs">close</span></button>
-        <button class="chip sm conv-focus time-focus hidden" id="f-time" title="Showing one time window – click to clear"><span class="msi xs">schedule</span><span class="label"></span><span class="msi xs">close</span></button>
-        <label class="search compact">
-          <span class="msi sm">travel_explore</span>
-          <input id="conv-q" type="search" placeholder="Find conversations containing…" autocomplete="off">
-          <button class="icon-btn sm hidden" id="conv-only" title="Show only matching conversations in the graph"><span class="msi">filter_list</span></button>
-        </label>
-        <div class="tree" id="tree"></div>
-      </section>
-      <section class="section tags-section">
-        <div class="section-title"><div class="grow">Tags <span class="badge soft" id="tag-count">0</span></div>
-          <button class="icon-btn sm" id="tag-new" title="New custom tag"><span class="msi">add</span></button>
-          <button class="icon-btn sm" id="tag-clear" title="Clear tag filter"><span class="msi">filter_list_off</span></button>
-        </div>
-        <div class="chip-row tag-chips" id="tag-chips"></div>
-      </section>
-      <section class="section legend-section">
-        <div class="section-title"><div class="grow">Node types</div>
-          <button class="icon-btn sm" id="legend-reset" title="Show all types"><span class="msi">restart_alt</span></button>
-        </div>
-        <div class="legend" id="legend"></div>
-      </section>
-      <div class="drawer-foot">
-        <div class="stats" id="stats"></div>
-        <ul class="warn-list" id="warnings"></ul>
-      </div>
-    </aside>
+    <aside class="drawer" id="left"></aside>
 
     <section class="stage" id="stage">
       <div id="graph"></div>
@@ -178,6 +139,7 @@
 
   <script src="/vendor/vis/vis-network.min.js"></script>
   <script src="/static/js/common.js"></script>
+  <script src="/static/js/panels.js"></script>
   <script src="/static/js/app.js"></script>
 </body>
 </html>
