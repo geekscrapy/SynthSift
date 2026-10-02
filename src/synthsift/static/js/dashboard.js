@@ -301,9 +301,7 @@
       el("div", { class: "tip-foot" }, "Click to open · drag to zoom"));
     const r = evt && evt.clientX !== undefined ? { x: evt.clientX, y: evt.clientY } : (() => { const q = evt.target.getBoundingClientRect(); return { x: q.right, y: q.top }; })();
     tip.classList.add("show");
-    const tw = tip.offsetWidth, th = tip.offsetHeight;
-    tip.style.left = Math.max(8, Math.min(window.innerWidth - tw - 8, r.x + 14)) + "px";
-    tip.style.top = Math.max(8, Math.min(window.innerHeight - th - 8, r.y + 14)) + "px";
+    SS.placeNear(tip, r.x, r.y);
   }
   function wireChart(root, D, M, band) {
     const idxAt = (evt) => {

@@ -67,9 +67,14 @@ const SS = (() => {
 
   /* ---------------------------------------------------------- snackbar */
   let snackTimer = null;
+  /** a short message at the bottom of the page, with an optional action ({ label, run }), gone after `ms` */
   function snack(text, action = null, ms = 5000) {
-    const bar = document.getElementById("snackbar");
-    if (!bar) return;
+    let bar = document.getElementById("snackbar");
+    if (!bar) {
+      bar = el("div", { class: "snackbar", id: "snackbar", role: "status", "aria-live": "polite" },
+        el("span", { class: "grow", id: "snack-text" }), el("button", { class: "btn text sm hidden", id: "snack-action", type: "button" }));
+      document.body.append(bar);
+    }
     document.getElementById("snack-text").textContent = text;
     const btn = document.getElementById("snack-action");
     btn.classList.toggle("hidden", !action);
@@ -81,6 +86,8 @@ const SS = (() => {
     clearTimeout(snackTimer);
     if (ms) snackTimer = setTimeout(() => bar.classList.remove("show"), ms);
   }
+
+  function hideSnack() { const bar = document.getElementById("snackbar"); if (bar) bar.classList.remove("show"); }
 
   const debounce = (fn, ms) => {
     let t = null;
@@ -234,31 +241,144 @@ const SS = (() => {
     download(URL.createObjectURL(new Blob([text], { type: "text/csv" })), name);
   }
 
-  /* ------------------------------------------------------------- menus */
-  function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
-  /** show a menu at x, y (kept on screen); a mouse-down anywhere else closes it */
-  function placeMenu(menu, x, y) {
-    document.body.append(menu);
-    const w = menu.offsetWidth, h = menu.offsetHeight;
-    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
-    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + "px";
-    setTimeout(() => {
-      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close, true); } };
-      document.addEventListener("mousedown", close, true);
-    }, 0);
+  /* --------------------------------------------------- floating boxes */
+  /** put a floating box (position: fixed) next to a point: below and right of it, on the other side when it would not
+   *  fit, and always inside `bounds` (a DOMRect; the window by default) – menus, tooltips, the dashboard readout */
+  function placeNear(node, x, y, { gap = 14, bounds = null } = {}) {
+    const b = bounds || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+    const w = node.offsetWidth, h = node.offsetHeight;
+    let left = x + gap, top = y + gap;
+    if (left + w > b.right - 8) left = x - gap - w;
+    if (top + h > b.bottom - 8) top = y - gap - h;
+    node.style.left = Math.max(b.left + 8, Math.min(left, b.right - w - 8)) + "px";
+    node.style.top = Math.max(b.top + 8, Math.min(top, b.bottom - h - 8)) + "px";
   }
 
-  /* ------------------------------------------------------------ dialog */
-  function dialog({ title, iconName = "", body, wide = false, onClose = null }) {
-    const close = () => { root.remove(); document.removeEventListener("keydown", onKey); if (onClose) onClose(); };
-    const onKey = (e) => { if (e.key === "Escape") close(); };
-    const card = el("div", { class: `dialog${wide ? " wide" : ""}`, role: "dialog", "aria-label": title },
+  /* ------------------------------------------------------------- menus */
+  // Every pop-up menu (right-click menus, tag menus, toolbar menus) opens through placeMenu: kept on screen, closed by
+  // a mouse-down elsewhere or Escape, walked with ↑ / ↓ / Home / End, and focus goes back where it was when it closes.
+  function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
+  /** show `menu` at a point (x, y) or, given an element as `x`, under it and right-aligned with it */
+  function placeMenu(menu, x, y) {
+    const before = document.activeElement;
+    menu.classList.add("menu");
+    document.body.append(menu);
+    if (x instanceof Element) {
+      const r = x.getBoundingClientRect();
+      placeNear(menu, r.right - menu.offsetWidth, r.bottom + 4, { gap: 0 });
+    } else placeNear(menu, x, y, { gap: 2 });
+    const close = () => {
+      menu.remove();
+      document.removeEventListener("mousedown", outside, true);
+      if (before && before.focus && document.contains(before)) before.focus();
+    };
+    const outside = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", outside, true); } };
+    setTimeout(() => document.addEventListener("mousedown", outside, true), 0);
+    menu.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+      if (!e.target.matches("button") || !["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const items = [...menu.querySelectorAll("button:not([disabled])")];
+      const i = items.indexOf(e.target);
+      const j = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[j] && items[j].focus();
+    });
+    const first = menu.querySelector("button:not([disabled])");
+    if (first) first.focus({ preventScroll: true });
+  }
+  /** a menu of items at an element (under it) or at { x, y }. An item: { icon, label, sub, title, run, disabled } plus
+   *  `on` (one of a set of choices) or `checked` (a checkbox: the menu stays open). `items` may be a function, called
+   *  again after a checkbox changes; null items are left out. */
+  function menu(at, items) {
+    closeMenus();
+    const box = el("div", { class: "menu", role: "menu" });
+    const draw = () => {
+      const focused = [...box.children].indexOf(document.activeElement);
+      box.replaceChildren(...(typeof items === "function" ? items() : items).filter(Boolean).map((it) => {
+        const check = it.checked !== undefined, radio = it.on !== undefined;
+        return el("button", {
+          type: "button", role: check ? "menuitemcheckbox" : radio ? "menuitemradio" : "menuitem",
+          "aria-checked": check ? String(!!it.checked) : radio ? String(!!it.on) : null, title: it.title, disabled: it.disabled,
+          onclick: () => { if (check) { it.run(); draw(); } else { box.remove(); it.run(); } },
+        }, icon(check ? (it.checked ? "check_box" : "check_box_outline_blank") : it.on ? "radio_button_checked" : it.icon),
+        el("span", { class: "grow" }, it.label, it.sub ? el("div", { class: "sub" }, it.sub) : null));
+      }));
+      if (focused >= 0 && box.children[focused]) box.children[focused].focus();
+    };
+    draw();
+    at instanceof Element ? placeMenu(box, at) : placeMenu(box, at.x, at.y);
+    return box;
+  }
+
+  /* ----------------------------------------------------------- dialogs */
+  // One modal for everything that asks or shows something over the page: the module inspector, confirmations,
+  // questions (new tag …). Escape, the close button or a click on the scrim closes it; keys pressed inside it do not
+  // reach the page's own shortcuts; focus goes to its first field (or main button) and back where it was after.
+  /** `actions` [{ label, kind: "filled" | "danger" | "text", run(close) }] become buttons at the bottom; Enter in a
+   *  one-line field runs the last one. `size`: "" | "wide" | "small". Returns { close, card }. */
+  function dialog({ title, iconName = "", body, size = "", wide = false, actions = null, onClose = null }) {
+    const before = document.activeElement;
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      root.remove();
+      if (before && before.focus && document.contains(before)) before.focus();
+      if (onClose) onClose();
+    };
+    const buttons = (actions || []).map((a) => el("button", { type: "button", class: `btn ${a.kind || "text"}`, onclick: () => a.run(close) }, a.label));
+    const card = el("div", { class: `dialog ${wide ? "wide" : size}`, role: "dialog", "aria-modal": "true", "aria-label": title },
       el("div", { class: "dialog-head" }, iconName ? icon(iconName) : null, el("div", { class: "grow dialog-title" }, title),
         el("button", { class: "icon-btn sm", title: "Close", onclick: close }, icon("close", "sm"))),
-      el("div", { class: "dialog-body" }, body));
-    const root = el("div", { class: "dialog-scrim", onclick: (e) => { if (e.target === root) close(); } }, card);
+      el("div", { class: "dialog-body" }, body),
+      buttons.length ? el("div", { class: "dialog-actions" }, buttons) : null);
+    const root = el("div", {
+      class: "dialog-scrim", onclick: (e) => { if (e.target === root) close(); },
+      onkeydown: (e) => {
+        e.stopPropagation(); // the page's shortcuts (arrows, S, Escape …) stay off while it is open
+        if (e.key === "Escape") { e.preventDefault(); close(); }
+        else if (e.key === "Enter" && buttons.length && e.target.matches("input:not([type=checkbox])")) { e.preventDefault(); buttons[buttons.length - 1].click(); }
+      },
+    }, card);
     document.body.append(root);
-    document.addEventListener("keydown", onKey);
+    (card.querySelector("input, textarea, select") || buttons[buttons.length - 1] || card.querySelector(".icon-btn")).focus();
+    return { close, card };
+  }
+  /** ask a yes / no question; resolves to true when confirmed */
+  function confirmDialog({ title, text = "", ok = "OK", danger = false, iconName = danger ? "warning" : "help" }) {
+    return new Promise((resolve) => {
+      let yes = false;
+      dialog({
+        title, iconName, size: "small", body: text ? el("p", { class: "dialog-text" }, text) : null, onClose: () => resolve(yes),
+        actions: [{ label: "Cancel", run: (close) => close() },
+          { label: ok, kind: danger ? "danger" : "filled", run: (close) => { yes = true; close(); } }],
+      });
+    });
+  }
+  /** ask for a line of text; resolves to it (trimmed) or null when cancelled. `check(value)` returns an error message
+   *  (shown under the field) or "" when the value will do; `extra` goes under the field. */
+  function promptDialog({ title, label = "", value = "", placeholder = "", ok = "OK", iconName = "edit", check = null, extra = null }) {
+    return new Promise((resolve) => {
+      let answer = null;
+      const input = el("input", { class: "text-input", type: "text", value, placeholder, "aria-label": label || title });
+      const err = el("div", { class: "dialog-error", role: "alert" });
+      dialog({
+        title, iconName, size: "small", onClose: () => resolve(answer),
+        body: el("div", { class: "dialog-form" }, label ? el("label", { class: "dialog-label" }, label) : null, input, err, extra),
+        actions: [{ label: "Cancel", run: (close) => close() }, {
+          label: ok, kind: "filled",
+          run: (close) => {
+            const v = input.value.trim();
+            const problem = check ? check(v) : v ? "" : "Please enter a value";
+            if (problem) { err.textContent = problem; input.focus(); return; }
+            answer = v;
+            close();
+          },
+        }],
+      });
+      input.select();
+    });
   }
 
   /* ---------------------------------------------------- loading screen */
@@ -359,7 +479,7 @@ const SS = (() => {
   // What every enrichment module stored for some paragraphs (click a turn's data button).
   async function inspect(pids, { title = "Enrichment", paras = null } = {}) {
     const body = el("div", { class: "inspector" }, el("div", { class: "muted" }, "Loading…"));
-    dialog({ title: `${title} – what the modules extracted`, iconName: "data_object", body, wide: true });
+    dialog({ title: `${title} – what the modules extracted`, iconName: "data_object", body, size: "wide" });
     const parts = [];
     for (const [i, pid] of pids.entries()) {
       let d;
@@ -427,8 +547,9 @@ const SS = (() => {
   // Nodes and Timeline pages share. G holds kinds, convs, events, paras and nodes (Maps), filter, hiddenConvs,
   // annotations and tags. Annotation targets are "conv:<cid>", "event:<event id>" and "term:<entity node id>".
   //   onSaved()    runs after an annotation was saved
-  //   promptTag()  asks for a new tag's name in the tag menu (and may create the tag); resolves to it or null
-  function model(G, { onSaved, promptTag }) {
+  //   promptTag()  optional: asks for a new tag in the tag menus (default: the shared New tag dialog); resolves to its name or null
+  const TAG_PALETTE = ["#1A73E8", "#9334E6", "#12B5CB", "#E52592", "#188038", "#B06000", "#D93025", "#5F6368"];
+  function model(G, { onSaved, promptTag = null }) {
     /* kinds */
     function kind(key) {
       let k = G.kinds.get(key);
@@ -567,14 +688,26 @@ const SS = (() => {
       cur.has(tag) ? cur.delete(tag) : cur.add(tag);
       return saveAnnotation(target, [...cur]);
     }
-    /** ask for a name and create a custom tag in the next palette colour; resolves to the name or null */
+    /** ask for a name and a colour and create a custom tag; resolves to its name (an existing tag's too) or null */
     async function newTag() {
-      const name = (prompt("New tag name") || "").trim().toLowerCase();
+      const palette = TAG_PALETTE;
+      let color = palette[G.tags.length % palette.length];
+      const swatches = el("div", { class: "swatch-row", role: "radiogroup", "aria-label": "Colour" });
+      const drawSwatches = () => swatches.replaceChildren(...palette.map((c) => el("button", {
+        type: "button", class: `swatch-pick${c === color ? " on" : ""}`, style: { background: c }, role: "radio",
+        "aria-checked": String(c === color), "aria-label": c, onclick: () => { color = c; drawSwatches(); },
+      })));
+      drawSwatches();
+      const name = await promptDialog({
+        title: "New tag", label: "Name", placeholder: "e.g. escalated", ok: "Create", iconName: "sell", extra: swatches,
+        check: (v) => (!v ? "Give the tag a name" : v.length > 40 ? "Up to 40 characters" : ""),
+      });
       if (!name) return null;
-      const color = ["#1A73E8", "#9334E6", "#12B5CB", "#E52592", "#188038", "#B06000"][G.tags.length % 6];
+      const key = name.toLowerCase().split(/\s+/).join(" "); // as the server stores it
+      if (G.tags.some((t) => t.name === key)) return key;
       try {
-        G.tags = (await api("/api/tags", { method: "POST", body: { name, color } })).tags;
-        return name;
+        G.tags = (await api("/api/tags", { method: "POST", body: { name: key, color } })).tags;
+        return key;
       } catch (e) { snack(e.message); return null; }
     }
 
@@ -608,7 +741,7 @@ const SS = (() => {
               icon(s.icon), el("span", { class: "dot", style: { background: t.color } }),
               el("span", { class: "grow" }, t.name), s.have && !s.all ? el("span", { class: "sub" }, `${s.have}/${ts.length}`) : null);
           }),
-          ...(withNewTag ? [el("button", { onclick: async () => { const n = await promptTag(); if (n) { await bulkTag(targets(), n, true); draw(); } } },
+          ...(withNewTag ? [el("button", { onclick: async () => { const n = await (promptTag || newTag)(); if (n) { await bulkTag(targets(), n, true); draw(); } } },
             icon("add"), el("span", { class: "grow" }, "New tag…"))] : []));
       };
       draw();
@@ -746,7 +879,7 @@ const SS = (() => {
             onclick: async () => { await toggleTag(target, t.name); render(); },
           }, icon(cur.has(t.name) ? "check_box" : "check_box_outline_blank"), el("span", { class: "dot", style: { background: t.color } }),
             el("span", { class: "grow" }, t.name))),
-          el("button", { onclick: async () => { const t = await promptTag(); if (t) { await toggleTag(target, t); render(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")),
+          el("button", { onclick: async () => { const t = await (promptTag || newTag)(); if (t) { await toggleTag(target, t); render(); } } }, icon("add"), el("span", { class: "grow" }, "New tag…")),
           el("div", { class: "tm-comment" }, ta, el("div", { class: "tm-actions" },
             el("button", { class: "btn text sm", onclick: async () => { await saveAnnotation(target, [], ""); menu.remove(); } }, "Clear all"),
             el("button", { class: "btn filled sm", onclick: async () => { await saveAnnotation(target, [...tagsFor(target)], ta.value); menu.remove(); snack("Comment saved"); } }, "Save comment"))));
@@ -793,8 +926,8 @@ const SS = (() => {
   }
 
   return {
-    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, debounce, metaChips, onlyChip, kindChip,
-    fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, narrowScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, loading, inspect,
+    store, api, esc, el, icon, applyTheme, effectiveTheme, cssVar, snack, hideSnack, debounce, metaChips, onlyChip, kindChip,
+    fmt, plural, secs, fmtTime, fmtDay, fmtRange, isoToLocalInput, localInputToIso, SCOPE_KEYS, emptyScope, narrowScope, scopeFromURL, pageURL, makeRegex, strHash, download, downloadCSV, closeMenus, placeMenu, placeNear, menu, dialog, confirmDialog, promptDialog, loading, inspect,
     SEV_ORDER, SEV_COLOR, sevRank, worstSeverity, STRUCTURAL, KIND_GROUPS, LAYERS, ROLE_ICON, kindKey, loadKinds, model,
   };
 })();

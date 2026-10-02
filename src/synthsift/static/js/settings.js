@@ -321,7 +321,7 @@
           if (on) watchProgress();
         } }), el("span", { class: "track" }))),
       el("td", { style: { textAlign: "right" } }, el("button", { class: "icon-btn sm", title: "Delete list", onclick: async () => {
-        if (!confirm(`Delete ${l.name}?`)) return;
+        if (!await SS.confirmDialog({ title: `Delete the list “${l.name}”?`, text: "Its entries stop being matched.", ok: "Delete", danger: true })) return;
         const r2 = await api(`/api/lists/${encodeURIComponent(l.name)}`, { method: "DELETE" });
         drawLists(box, r2.lists);
         if (on) watchProgress();
@@ -343,7 +343,7 @@
       el("td", {}, new Date(d.uploaded_at * 1000).toLocaleString()),
       el("td", {}, (d.warnings || []).length ? el("span", { class: "status-stub", title: d.warnings.join("\n") }, icon("warning", "xs"), ` ${d.warnings.length}`) : ""),
       el("td", { style: { textAlign: "right" } }, el("button", { class: "icon-btn sm", title: "Delete", onclick: async () => {
-        if (!confirm(`Delete ${d.name}?`)) return;
+        if (!await SS.confirmDialog({ title: `Delete “${d.name}”?`, text: "The archive and its transcripts are removed from the workspace.", ok: "Delete", danger: true })) return;
         await api(`/api/datasets/${encodeURIComponent(d.id)}`, { method: "DELETE" });
         snack(`Deleted ${d.name}`);
         renderDatasets(card);
@@ -354,7 +354,7 @@
         : el("div", { class: "set-row" }, el("div", { class: "lbl muted" }, "No archives uploaded yet.")),
       el("div", { class: "set-row" }, el("div", { class: "lbl" }, el("div", { class: "name" }, "Remove everything"), el("div", { class: "help" }, "Deletes all uploaded archives from the data directory.")),
         el("div", { class: "ctl" }, el("button", { class: "btn outlined", disabled: !list.length, onclick: async () => {
-          if (!confirm("Delete all uploaded archives?")) return;
+          if (!await SS.confirmDialog({ title: "Delete every uploaded archive?", text: "All transcripts are removed from the workspace. This cannot be undone.", ok: "Delete all", danger: true })) return;
           await api("/api/datasets", { method: "DELETE" });
           snack("All archives deleted");
           renderDatasets(card);
@@ -422,7 +422,7 @@
   });
   $("discard").addEventListener("click", () => { state.dirty = {}; render(); updateSavebar(); });
   $("reset").addEventListener("click", async () => {
-    if (!confirm("Reset every setting to its default? Transcripts will be re-analysed.")) return;
+    if (!await SS.confirmDialog({ title: "Reset every setting?", text: "All settings go back to their defaults and the transcripts are analysed again.", ok: "Reset", danger: true })) return;
     const res = await api("/api/settings/reset", { method: "POST" });
     state.values = res.values;
     state.dirty = {};

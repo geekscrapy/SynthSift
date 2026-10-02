@@ -2,7 +2,7 @@
 "use strict";
 
 (() => {
-  const { store, api, esc, el, icon, snack, debounce, fmt, plural, fmtTime, makeRegex, closeMenus, placeMenu } = SS;
+  const { store, api, esc, el, icon, snack, debounce, fmt, plural, fmtTime, makeRegex, closeMenus } = SS;
   const { SEV_ORDER, SEV_COLOR, sevRank, LAYERS, kindKey } = SS;
   const $ = (id) => document.getElementById(id);
 
@@ -67,10 +67,7 @@
     posCache: {},
   };
   // lookups and analyst tags / comments, shared with the Nodes and Timeline pages
-  const M = SS.model(S, {
-    onSaved: () => { afterAnnotationChange(); broadcast({ type: "annotations" }); },
-    promptTag: async () => (prompt("New tag name") || "").trim().toLowerCase() || null, // the server adds unknown tags
-  });
+  const M = SS.model(S, { onSaved: () => { afterAnnotationChange(); broadcast({ type: "annotations" }); } });
   const { kind, kindOf, convMatchesFilter, convVisible, windowOn, inWindow, paraVisible, nodeInWindow, targetOf, annOf, tagsFor, tagInfo, nodeTags,
     loadAnnotations, tagChipsHTML } = M;
   const chan = "BroadcastChannel" in window ? new BroadcastChannel("synthsift") : null;
@@ -158,15 +155,12 @@
     setTimeout(() => { network.redraw(); network.fit({ animation: { duration: 300 } }); }, 80);
   }
   function dockMenu(anchor) {
-    closeMenus();
-    const item = (ic, label, run, on) => el("button", { onclick: () => { menu.remove(); run(); } }, icon(on ? "radio_button_checked" : ic), el("span", { class: "grow" }, label));
-    const menu = el("div", { class: "menu" },
-      item("dock_to_right", "Dock right", () => setDock("right"), S.dock === "right" && !S.popout),
-      item("dock_to_left", "Dock left", () => setDock("left"), S.dock === "left" && !S.popout),
-      item("dock_to_bottom", "Dock bottom", () => setDock("bottom"), S.dock === "bottom" && !S.popout),
-      item("open_in_new", "Open in a new window", popOut, !!S.popout));
-    const r = anchor.getBoundingClientRect();
-    placeMenu(menu, r.right - 240, r.bottom + 4);
+    SS.menu(anchor, [
+      { icon: "dock_to_right", label: "Dock right", on: S.dock === "right" && !S.popout, run: () => setDock("right") },
+      { icon: "dock_to_left", label: "Dock left", on: S.dock === "left" && !S.popout, run: () => setDock("left") },
+      { icon: "dock_to_bottom", label: "Dock bottom", on: S.dock === "bottom" && !S.popout, run: () => setDock("bottom") },
+      { icon: "open_in_new", label: "Open in a new window", on: !!S.popout, run: popOut },
+    ]);
   }
   function popOut() {
     if (S.panelOnly) return;
@@ -1224,14 +1218,8 @@
 
   function placeTip() {
     const tip = $("tooltip");
-    const stage = $("stage").getBoundingClientRect();
     tip.classList.add("show");
-    const tw = tip.offsetWidth, th = tip.offsetHeight;
-    let x = S.pointer.x - stage.left + 16, y = S.pointer.y - stage.top + 16;
-    if (x + tw > stage.width - 8) x = Math.max(8, S.pointer.x - stage.left - tw - 16);
-    if (y + th > stage.height - 8) y = Math.max(8, S.pointer.y - stage.top - th - 16);
-    tip.style.left = x + "px";
-    tip.style.top = y + "px";
+    SS.placeNear(tip, S.pointer.x, S.pointer.y, { gap: 16, bounds: $("stage").getBoundingClientRect() });
   }
   function hideTip() { $("tooltip").classList.remove("show"); }
 
@@ -2063,12 +2051,14 @@
       title: `Show only items tagged “${t.name}” (graph fades the rest; the Nodes and Timeline pages filter)`,
       onChange: () => { store.set("tagFilter", [...S.tagFilter]); afterTagFilter(); },
       attrs: {
-        oncontextmenu: (e) => {
+        oncontextmenu: async (e) => {
           e.preventDefault();
           if (["bad", "suspicious", "seen", "ignore"].includes(t.name)) return;
-          if (confirm(`Delete custom tag “${t.name}” and remove it everywhere?`)) {
-            api(`/api/tags?name=${encodeURIComponent(t.name)}`, { method: "DELETE" }).then(async () => { await loadAnnotations(); afterAnnotationChange(); broadcast({ type: "annotations" }); });
-          }
+          const yes = await SS.confirmDialog({ title: `Delete the tag “${t.name}”?`, text: "It is removed from every session, turn and term that carries it.",
+            ok: "Delete", danger: true });
+          if (!yes) return;
+          await api(`/api/tags?name=${encodeURIComponent(t.name)}`, { method: "DELETE" });
+          await loadAnnotations(); afterAnnotationChange(); broadcast({ type: "annotations" });
         },
       },
       children: [el("span", { class: "swatch" }), el("span", { class: "label" }, t.name), el("span", { class: "count" }, fmt(counts.get(t.name) || 0))],
@@ -2406,7 +2396,7 @@
     try {
       snack(`Uploading ${plural(zips.length, "file")}…`, null, 0);
       await api("/api/upload", { method: "POST", body: fd });
-      wasBusy = true; $("snackbar").classList.remove("show"); // hide "Uploading…"
+      wasBusy = true; SS.hideSnack(); // hide "Uploading…"
       pollStatus();
     } catch (e) {
       snack("Upload failed: " + e.message, null, 8000);
@@ -2414,26 +2404,21 @@
   }
 
   function exportMenu(anchor) {
-    closeMenus();
     const convs = S.convOrder.filter(convVisible).join(",");
     const dark = S.theme === "dark";
-    const item = (ic, label, sub, run) => el("button", { onclick: () => { menu.remove(); run(); } }, icon(ic), el("span", { class: "grow" }, label, el("div", { class: "sub" }, sub)));
-    const menu = el("div", { class: "menu" },
-      item("hub", "Standalone pyvis HTML", "Visible conversations, opens offline", () => (location.href = `/api/export/pyvis?convs=${encodeURIComponent(convs)}&dark=${dark}`)),
-      item("account_tree", "GraphML", "For Gephi, yEd, Cytoscape", () => (location.href = `/api/export/graphml?convs=${encodeURIComponent(convs)}`)),
-      item("download", "PNG snapshot", "Current view of the canvas", () => {
+    SS.menu(anchor, [
+      { icon: "hub", label: "Standalone pyvis HTML", sub: "Visible conversations, opens offline",
+        run: () => (location.href = `/api/export/pyvis?convs=${encodeURIComponent(convs)}&dark=${dark}`) },
+      { icon: "account_tree", label: "GraphML", sub: "For Gephi, yEd, Cytoscape", run: () => (location.href = `/api/export/graphml?convs=${encodeURIComponent(convs)}`) },
+      { icon: "download", label: "PNG snapshot", sub: "Current view of the canvas", run: () => {
         const canvas = $("graph").querySelector("canvas");
         const out = document.createElement("canvas");
         out.width = canvas.width; out.height = canvas.height;
         const cx = out.getContext("2d");
         cx.fillStyle = GC.surface; cx.fillRect(0, 0, out.width, out.height); cx.drawImage(canvas, 0, 0);
         SS.download(out.toDataURL("image/png"), "synthsift-graph.png");
-      }));
-    const r = anchor.getBoundingClientRect();
-    menu.style.top = r.bottom + 4 + "px";
-    menu.style.right = Math.max(8, window.innerWidth - r.right) + "px";
-    document.body.append(menu);
-    setTimeout(() => document.addEventListener("click", function close(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", close); } }), 0);
+      } },
+    ]);
   }
 
   /* ============================================================ wiring */

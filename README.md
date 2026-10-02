@@ -908,6 +908,19 @@ The front end is plain HTML/CSS/JS in `src/synthsift/static/`, with no build
 step. Fonts (Roboto, Roboto Mono, Material Symbols) and vis-network are served
 locally, so the app works offline.
 
+Shared building blocks live in `static/js/common.js` (`SS`); use them rather
+than building your own:
+
+| Building block | Use it for |
+|---|---|
+| `SS.dialog({ title, body, actions, size })` | anything shown over the page (Escape and the scrim close it, page shortcuts are off while it is open, focus returns afterwards) |
+| `SS.confirmDialog({ title, text, ok, danger })`, `SS.promptDialog({ title, label, check })` | questions: promise-based, themed – no native `confirm()` / `prompt()` |
+| `SS.menu(anchorOrPoint, items)`, `SS.placeMenu(el, …)` | pop-up menus: kept on screen, ↑/↓/Home/End, Escape, focus back to the button |
+| `SS.onlyChip({ key, set, mode, … })` | every multiple-choice chip filter, with its **only** button |
+| `SS.snack(text, action)` | short messages with an optional *Undo* (the bar is created on first use) |
+| `SS.placeNear(el, x, y, { bounds })` | tooltips and other boxes next to the pointer |
+| `model.newTag()`, `model.bulkMenu()`, `model.itemMenu()` | creating tags, tagging many items, the right-click menu |
+
 ## Credits & licences
 
 * WordNet 3.0 © Princeton University. The category lexicon in

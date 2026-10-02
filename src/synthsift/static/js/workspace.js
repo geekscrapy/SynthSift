@@ -9,7 +9,7 @@
 "use strict";
 
 const WS = (() => {
-  const { store, api, esc, el, icon, snack, fmt, plural, fmtTime, closeMenus, placeMenu } = SS;
+  const { store, api, esc, el, icon, snack, fmt, plural, fmtTime } = SS;
 
   const W = {
     data: null,
@@ -322,15 +322,9 @@ const WS = (() => {
 
   /** show / hide the optional columns; `hidden` is the page's set of hidden column keys */
   function columnsMenu(anchor, cols, hidden, onChange) {
-    closeMenus();
-    const menu = el("div", { class: "menu", role: "menu" });
-    const draw = () => menu.replaceChildren(...cols.filter((c) => !c.fixed).map((c) => el("button", {
-      role: "menuitemcheckbox", "aria-checked": hidden.has(c.key) ? "false" : "true",
-      onclick: () => { hidden.has(c.key) ? hidden.delete(c.key) : hidden.add(c.key); onChange(); draw(); },
-    }, icon(hidden.has(c.key) ? "check_box_outline_blank" : "check_box"), el("span", { class: "grow" }, c.label))));
-    draw();
-    const r = anchor.getBoundingClientRect();
-    placeMenu(menu, r.right - 200, r.bottom + 4);
+    SS.menu(anchor, () => cols.filter((c) => !c.fixed).map((c) => ({
+      label: c.label, checked: !hidden.has(c.key), run: () => { hidden.has(c.key) ? hidden.delete(c.key) : hidden.add(c.key); onChange(); },
+    })));
   }
 
   /* ----------------------------------------- table pages: checked rows */
