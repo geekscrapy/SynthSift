@@ -11,7 +11,7 @@ from typing import Any
 class Field:
     key: str
     label: str
-    type: str  # bool | int | float | select | multiselect | text | textarea | color | lists | hidden
+    type: str  # bool | int | float | select | multiselect | text | textarea | color | lists | checks | hidden
     default: Any
     scope: str  # segment | parse | graph | view | system
     section: str

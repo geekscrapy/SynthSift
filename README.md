@@ -28,6 +28,9 @@ labels and the security findings. Modules run in parallel where they don't
 depend on each other, only new paragraphs are processed, and changing a
 module's options re-runs just that module and what depends on it. Writing a
 new one is a single file (see [Writing an enrichment module](#writing-an-enrichment-module)).
+Every security check is a plugin too: switch it off, change its severity,
+replace it or add your own by dropping a Python file into the data directory
+(see [CHECKS.md](CHECKS.md)).
 
 ![Overview](docs/overview.jpg)
 
@@ -50,6 +53,7 @@ uv run synthsift serve --load samples/synthsift-samples.zip --open
 uv run synthsift build my-transcripts.zip -o graph.html   # standalone pyvis HTML, no server
 python3 collector/synthsift_collect.py      # zip this machine's agent sessions (standalone, see collector/)
 uv run synthsift harnesses                  # list transcript parsers
+uv run synthsift checks                     # list security checks, built-in and your own
 ```
 
 `uv run` creates the environment on first use, including the small English
@@ -542,8 +546,9 @@ and a CI runner, newest first:
 
 ## Security analysis
 
-Signals are structural and deterministic (`nlp/security.py`). The code reasons about
-where data moves rather than shipping a list of named tools:
+Signals are structural and deterministic. Each one comes from a **check**, a
+small plugin in `src/synthsift/checks/`. The checks reason about where data
+moves rather than shipping a list of named tools:
 
 | Signal | Example | Severity |
 |---|---|---|
@@ -567,6 +572,14 @@ ignored, which keeps coding-agent logs quiet:
 
 Localhost, `/dev/null`, plain fetches without a write, and
 `curl … | python -c '…'` (stdin is data, not code) are ignored too.
+
+Settings → Modules → **Security analysis** lists every check. From there you
+can switch any check off or change the severity it reports. To add checks of
+your own, or replace a built-in one, put Python files in `<data dir>/checks/`.
+They are picked up on the next run, and editing one re-runs the scan.
+[CHECKS.md](CHECKS.md) is the guide to the check SDK: what a check sees, the
+parsed command line, how findings and chains are made, run order, settings and
+testing.
 
 Each finding records the conversation, turn and the entities involved; chains
 become `dataflow` edges in the graph. The samples that show most signals are:
@@ -686,7 +699,7 @@ Processing runs in four stages, and each change redoes only what it affects:
 | Entity resolver (`entities`, always on) | extraction | paragraph | `x_entities`, `x_relations` | the entities and relations the graph shows |
 | Text statistics (`text_stats`) | feature | paragraph | `f_text_stats` | length, words, lines, character mix, entropy, URL count |
 | Content type (`content_type`) | label | paragraph | `l_content_type` | prose / code / command / JSON / log / stack trace / diff / table, plus a *secret-like* flag |
-| Security analysis (`security`) | analysis | corpus | `a_findings` | the security findings |
+| Security analysis (`security`) | analysis | corpus | `a_findings` | the findings of the security checks (`checks/`, plus yours in `<data dir>/checks/`; see [CHECKS.md](CHECKS.md)) |
 
 Settings → **Modules** has a card per module: an on/off switch, its options,
 which modules it runs after, its tables with row counts and a CSV download, how
@@ -806,6 +819,31 @@ st = open_storage(None)                       # in-memory DuckDB
 print(Runner(st, {**defaults(), "mod.questions": True}).run()["steps"])
 print(st.query("SELECT * FROM f_questions LIMIT 5"))
 ```
+
+## Writing a security check
+
+A check is a class with a `run(ctx)` method that yields findings for one turn.
+Put it in `<data dir>/checks/<anything>.py` and it shows up in Settings →
+Modules → Security analysis on the next run:
+
+```python
+from synthsift.checks import Check, register
+
+
+@register
+class TlsVerificationOff(Check):
+    name = "tls_verification_off"
+    label = "TLS verification turned off"
+    category, severity, events = "execution", "low", ("tool_call",)
+
+    def run(self, ctx):
+        if " --insecure" in ctx.command.text:
+            yield self.finding(ctx, f"`{ctx.command.base}` turned off certificate checks")
+```
+
+See [CHECKS.md](CHECKS.md) for the SDK: the turn context, the parsed command
+line (`ctx.command`), findings and `source → action → sink` chains, run order,
+settings, replacing built-in checks, corpus checks and testing.
 
 ## Adding a harness
 

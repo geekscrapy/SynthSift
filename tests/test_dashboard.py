@@ -6,7 +6,7 @@ from synthsift.harnesses.openclaw import events_to_conversation
 from synthsift.models import Block, Conversation, Message
 from synthsift.modules import registry
 from synthsift.modules.runner import Runner
-from synthsift.nlp import security
+from synthsift import checks
 from synthsift.segment import segment
 from synthsift.settings import defaults
 from test_modules import _ioc_run
@@ -70,7 +70,7 @@ def test_ioc_and_keyword_findings(tmp_path, sample_zip):
     for f in fs:
         by.setdefault(f["category"], set()).add(f["value"])
     assert by["ioc"] == {"api.example.com"} and by["keyword"] == {"garlic bread"} and by["watchlist"] == {"sudo"}
-    assert set(security.CATEGORIES) >= {"ioc", "keyword", "watchlist"}
+    assert set(checks.CATEGORIES) >= {"ioc", "keyword", "watchlist"}
     ws.close()
 
 

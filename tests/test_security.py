@@ -1,7 +1,7 @@
 from synthsift.models import Block, Conversation, Message
 from synthsift.modules import enabled_modules
 from synthsift.modules.runner import analyze
-from synthsift.nlp import security
+from synthsift import checks
 from synthsift.segment import segment
 from synthsift.settings import defaults
 
@@ -11,7 +11,7 @@ def run(*messages, **cfg_overrides):
     cfg = {**defaults(), **cfg_overrides}
     evs, paras = segment(conv, cfg)
     analysis = analyze([(p.id, p.text, p.role, p.code) for p in paras], cfg)
-    return security.scan([conv], {"c1": evs}, {p.id: p for p in paras}, analysis, cfg)
+    return checks.scan([conv], {"c1": evs}, {p.id: p for p in paras}, analysis, cfg)
 
 
 def call(cmd, i=0):

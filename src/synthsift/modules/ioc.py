@@ -32,7 +32,7 @@ from typing import Any
 from ..db import table
 from ..fields import Field
 from ..nlp.regex_extractors import REGEX_BY_NAME
-from ..nlp.security import SEVERITIES
+from ..checks import SEVERITIES
 from .base import Module, register, span_table
 
 KIND_CATEGORY = {"ip": "ip", "cidr": "ip", "domain": "domain", "url": "url", "email": "email", "hash": "hash",

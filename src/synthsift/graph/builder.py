@@ -24,7 +24,7 @@ import networkx as nx
 
 from ..categories import NODE_TYPES
 from ..nlp.pipeline import ParaResult
-from ..nlp.security import SEV_RANK
+from ..checks import SEV_RANK
 from ..segment import Event, Paragraph
 
 LAYER_OF = {k.key: k.layer for k in NODE_TYPES}

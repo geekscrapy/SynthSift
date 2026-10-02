@@ -131,6 +131,8 @@
         return el("input", { type: "color", value: v, oninput: (e) => setValue(f, e.target.value) });
       case "lists":
         return listsControl();
+      case "checks":
+        return checksControl(f);
       default:
         return el("input", { class: "text-input", value: v, oninput: (e) => setValue(f, e.target.value) });
     }
@@ -143,7 +145,7 @@
 
   function renderRow(f) {
     if (f.type === "hidden") return null;
-    const wide = f.type === "textarea" || f.type === "multiselect" || f.type === "lists";
+    const wide = ["textarea", "multiselect", "lists", "checks"].includes(f.type);
     return el("div", { class: `set-row${wide ? " wide" : ""}${f.key in state.dirty ? " dirty" : ""}`, "data-row": f.key, "data-search": `${f.label} ${f.help} ${f.key}`.toLowerCase() },
       el("div", { class: "lbl" },
         el("div", { class: "name" }, f.label, el("span", { class: `scope ${f.scope}`, title: "What happens when this changes" }, SCOPE_LABEL[f.scope])),
@@ -332,6 +334,76 @@
         el("tbody", {}, rows)) : null,
       zone, progress,
       !on && lists.length ? el("div", { class: "muted" }, icon("info", "xs"), " The module is off – switch it on above and save to match these lists.") : null].filter(Boolean));
+  }
+
+  /* Security checks: switch each off or change its severity (saved like any setting). The list comes from the
+     server, which reloads the analyst's own check files from the checks folder on every request. */
+  function checksControl(f) {
+    const box = el("div", { class: "lists-box checks-box" }, el("div", { class: "muted" }, "Loading checks…"));
+    const load = () => api("/api/checks").then((r) => drawChecks(box, f, r)).catch((e) => box.replaceChildren(el("div", { class: "muted" }, e.message)));
+    box._reload = load;
+    load();
+    return box;
+  }
+
+  const parseSeverities = (text) => Object.fromEntries(String(text || "").split("\n")
+    .map((l) => l.split(":").map((x) => x.trim())).filter(([k, v]) => k && v && !k.startsWith("#")));
+
+  function drawChecks(box, f, data) {
+    const sevField = state.schema.find((x) => x.key === "sec_severity");
+    const off = new Set(current(f.key) || []);
+    const sev = parseSeverities(current("sec_severity"));
+    const setSev = (c, v) => {
+      if (v === c.default_severity) delete sev[c.name]; else sev[c.name] = v;
+      setValue(sevField, Object.entries(sev).map(([k, x]) => `${k}: ${x}`).join("\n"));
+    };
+    const groups = new Map();
+    for (const c of data.checks) {
+      if (!groups.has(c.category_label)) groups.set(c.category_label, []);
+      groups.get(c.category_label).push(c);
+    }
+    const file = (p) => p.split(/[\\/]/).pop();
+    const rows = [];
+    for (const [label, list] of groups) {
+      rows.push(el("tr", { class: "group" }, el("td", { colspan: 3 }, label)));
+      for (const c of list) {
+        const on = !c.parked && !off.has(c.name);
+        const err = data.errors[c.name];
+        const cur = sev[c.name] || c.default_severity;
+        const sel = c.severity_from ? el("span", { class: "muted" }, c.severity_from) : el("select", { class: `select sev-select sev-${cur}`,
+          title: "Severity this check reports (a check may raise it, e.g. exfiltration of a secret is critical)",
+          onchange: (e) => { setSev(c, e.target.value); e.target.className = `select sev-select sev-${e.target.value}`; } },
+          data.severities.map((s) => el("option", { value: s, selected: s === cur }, s === c.default_severity ? `${s} (default)` : s)));
+        rows.push(el("tr", { class: on ? "" : "off", "data-check": c.name },
+          el("td", {}, el("label", { class: "switch", title: c.parked ? "Parked in its file (enabled = False)" : on ? "Runs" : "Switched off" },
+            el("input", { type: "checkbox", checked: on, disabled: c.parked, onchange: (e) => {
+              if (e.target.checked) off.delete(c.name); else off.add(c.name);
+              setValue(f, [...off].sort());
+              e.target.closest("tr").classList.toggle("off", !e.target.checked);
+            } }), el("span", { class: "track" }))),
+          el("td", { class: "grow" },
+            el("div", {}, el("b", {}, c.label), " ", el("span", { class: "muted mono" }, c.name),
+              c.source !== "builtin" ? el("span", { class: "tag", title: c.source }, icon("person", "xs"), c.overrides_builtin ? `${file(c.source)} · replaces built-in` : file(c.source)) : null,
+              err ? el("span", { class: "tag warn", title: err }, icon("error", "xs"), "failed last run") : null),
+            c.description ? el("div", { class: "muted" }, c.description) : null),
+          el("td", { class: "sev-cell" }, sel)));
+      }
+    }
+    const problems = (data.problems || []).map((p) => el("div", { class: "status-stub" }, icon("warning", "xs"), " ", p));
+    box.replaceChildren(
+      el("table", { class: "data-table checks-table" },
+        el("thead", {}, el("tr", {}, el("th", {}, "Run"), el("th", {}, "Check"), el("th", {}, "Severity"))),
+        el("tbody", {}, rows)),
+      ...problems,
+      el("div", { class: "checks-foot" }, icon("code"),
+        el("span", { class: "grow" }, "Add your own checks as Python files in ", el("code", { class: "mono" }, data.folder),
+          " – a file with a check of the same name replaces the built-in one. See CHECKS.md for the SDK. Files are re-read whenever the module runs."),
+        el("button", { class: "btn tonal sm", type: "button", title: "Re-read the checks folder", onclick: () => box._reload() }, icon("refresh", "sm"), "Reload"),
+        el("button", { class: "btn tonal sm", type: "button", title: "Run the security checks again now (only if a check file changed)", onclick: async () => {
+          await api("/api/checks/run", { method: "POST" });
+          snack("Re-running changed checks…", null, 3000);
+          watchProgress();
+        } }, icon("play_arrow", "sm"), "Run")));
   }
 
   async function renderDatasets(card) {

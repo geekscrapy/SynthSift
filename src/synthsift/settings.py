@@ -179,7 +179,7 @@ def coerce(key: str, value: Any) -> Any:
         if f.max is not None:
             num = min(num, type(num)(f.max))
         return num
-    if f.type == "multiselect":
+    if f.type in ("multiselect", "checks"):
         return [v for v in (value or []) if not f.options or v in f.options]
     if f.type == "select":
         return value if value in f.options else f.default

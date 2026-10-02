@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import categories
+from . import categories, checks
 from .annotations import AnnotationStore
 from .db import Batch, open_storage
 from .db.schema import CONVERSATIONS, CORE, DATASETS, EVENTS, PARA_TEXT, PARAGRAPHS
@@ -37,7 +37,6 @@ from .models import Conversation
 from .modules import enabled_modules, para_hash, registry
 from .modules.entities import read_results
 from .modules.runner import Runner
-from .nlp import security
 from .nlp.pipeline import ParaResult
 from .segment import VERSION as SEGMENT_VERSION
 from .segment import Event, Paragraph, segment
@@ -100,6 +99,7 @@ class Workspace:
         self.uploads = data_dir / "uploads"
         self.uploads.mkdir(parents=True, exist_ok=True)
         self.lists_dir = data_dir / "lists"
+        self.checks_dir = data_dir / "checks"  # analysts' own security checks
         self.settings = SettingsStore(data_dir / "settings.json")
         self.annotations = AnnotationStore(data_dir / "annotations.json")
         self.db = open_storage(data_dir / "synthsift.duckdb")
@@ -113,7 +113,7 @@ class Workspace:
         self.hashes: dict[str, str] = {}  # paragraph id -> content hash
         self.analysis: dict[str, ParaResult] = {}
         self.payload: dict[str, Any] | None = None
-        self.findings: list[security.Finding] = []
+        self.findings: list[checks.Finding] = []
         self.graph = None
         self.warnings: list[str] = []
         self.last_run: dict[str, Any] = {}
@@ -382,10 +382,10 @@ class Workspace:
         results = read_results(self.db)
         return {pid: results.get(self.hashes.get(pid, "")) or ParaResult() for pid in self.paragraphs}
 
-    def _load_findings(self) -> list[security.Finding]:
+    def _load_findings(self) -> list[checks.Finding]:
         if "security" not in enabled_modules(self.settings.values) or "a_findings" not in self.db.tables():
             return []
-        return [security.Finding(conv, event, cat, rule, label, sev, detail, json.loads(ents or "[]"),
+        return [checks.Finding(conv, event, cat, rule, label, sev, detail, json.loads(ents or "[]"),
                                  [tuple(c) for c in json.loads(chain or "[]")], value or "")
                 for conv, event, cat, rule, label, sev, detail, ents, chain, value in self.db.query(
                     "SELECT conv, event, category, rule, label, severity, detail, entities, chain, value FROM a_findings ORDER BY seq")]
@@ -443,8 +443,8 @@ class Workspace:
             "edges": data["edges"],
             "findings": [f.to_json() for f in self.findings],
             "security": {
-                "categories": security.CATEGORIES,
-                "severities": security.SEVERITIES,
+                "categories": checks.CATEGORIES,
+                "severities": checks.SEVERITIES,
                 "counts": dict(Counter(f.severity for f in self.findings)),
             },
             "warnings": self.warnings,

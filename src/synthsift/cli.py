@@ -65,7 +65,22 @@ def _harnesses(_: argparse.Namespace) -> None:
         print(f"{p.name:<14} {state:<6} aliases: {', '.join(p.aliases) or '-'}")
 
 
-COMMANDS = ("serve", "build", "harnesses")
+def _checks(args: argparse.Namespace) -> None:
+    from . import checks
+    from .settings import SettingsStore
+
+    data_dir = Path(args.data_dir).expanduser()
+    problems = checks.load_user_checks([data_dir / "checks"])
+    cfg = SettingsStore(data_dir / "settings.json" if (data_dir / "settings.json").exists() else None).values
+    for c in checks.describe(cfg):
+        state = "on" if c["on"] else "parked" if c["parked"] else "off"
+        where = "" if c["source"] == "builtin" else f"  [{Path(c['source']).name}{', replaces built-in' if c['overrides_builtin'] else ''}]"
+        print(f"{c['order']:>4}  {c['name']:<26} {state:<6} {c['severity']:<8} {c['category']:<18}{where}")
+    for p in problems:
+        print(f"problem: {p}", file=sys.stderr)
+
+
+COMMANDS = ("serve", "build", "harnesses", "checks")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -97,6 +112,10 @@ def main(argv: list[str] | None = None) -> None:
 
     h = sub.add_parser("harnesses", parents=[common], help="list registered transcript parsers")
     h.set_defaults(func=_harnesses)
+
+    c = sub.add_parser("checks", parents=[common], help="list security checks (built-in and your own)")
+    c.add_argument("--data-dir", default=".synthsift", help="its checks/ folder holds your own checks")
+    c.set_defaults(func=_checks)
 
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)

@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__
+from . import __version__, checks
 from .graph.export import subgraph, to_graphml, to_pyvis_html
 from .harnesses import all_parsers
 from .modules import registry
@@ -244,6 +244,24 @@ def create_app(workspace: Workspace) -> FastAPI:
         ws().settings.reset()
         ws().schedule("segment")
         return {"values": ws().settings.values}
+
+    # ------------------------------------------------------------ checks
+    @app.get("/api/checks")
+    def get_checks() -> dict:
+        """Every security check (user files in the checks folder are reloaded), plus problems loading them and
+        errors from the last run."""
+        w = ws()
+        problems = checks.load_user_checks([w.checks_dir])
+        note = json.loads(w.db.get_state("note:security") or "{}")
+        return {"checks": checks.describe(w.settings.values), "folder": str(w.checks_dir.resolve()),
+                "problems": problems, "errors": note.get("errors", {}), "severities": checks.SEVERITIES}
+
+    @app.post("/api/checks/run")
+    def run_checks() -> dict:
+        """Run the modules again: the security module re-runs when a check file changed (its fingerprint holds a
+        hash of the check code), everything else stays cached."""
+        ws().schedule("enrich")
+        return {"ok": True}
 
     # ------------------------------------------------------- annotations
     @app.get("/api/annotations")

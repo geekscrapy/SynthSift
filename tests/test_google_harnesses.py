@@ -257,7 +257,7 @@ def test_routing():
 
 
 def test_security_reads_antigravity_command_arguments():
-    from synthsift.nlp.security import command_text
+    from synthsift.checks.command import command_text
     # Antigravity capitalises its argument names; the working directory is not part of the command
     assert command_text({"CommandLine": "pytest -q", "Cwd": "/w/p"}, "run_command") == "pytest -q"
     # what write_to_file writes is data, not a command
