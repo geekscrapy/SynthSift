@@ -353,6 +353,15 @@
 
   /* =========================================================== filters */
   function computeVisible() {
+    // a turn is in scope when its conversation is shown, it is inside the time window and it isn't hidden as ignored
+    const scoped = new Map();
+    const turnInScope = (evId) => {
+      if (!scoped.has(evId)) {
+        const ev = S.events.get(evId);
+        scoped.set(evId, !!ev && convVisible(ev.c) && inWindow(ev.ts) && !(S.hideIgnored && nodeTags(evId).includes("ignore")));
+      }
+      return scoped.get(evId);
+    };
     const vis = new Set();
     for (const n of S.nodes.values()) {
       if (n.conv && n.conv.length && !n.conv.some(convVisible)) continue;
@@ -360,14 +369,11 @@
       if (S.hiddenLayers.has(n.layer)) continue;
       if (S.hiddenKinds.has(kindKey(n))) continue;
       if (S.hideIgnored && nodeTags(n.id).includes("ignore")) continue;
+      // a term stays while a turn in scope mentions it, a tool hub while one of its calls is in scope. Node types and
+      // layers hidden in the legend don't take them away: showing only one type shows all of its nodes, linked or not.
+      if (n.type === "entity" && n.occ && n.occ.length && !n.occ.some(([pid]) => turnInScope((S.paras.get(pid) || {}).e))) continue;
+      if (n.type === "tool_hub" && !(S.edgesByNode.get(n.id) || []).some((e) => turnInScope(e.from === n.id ? e.to : e.from))) continue;
       vis.add(n.id);
-    }
-    // entities left without any visible connection are hidden too
-    for (const id of [...vis]) {
-      const n = S.nodes.get(id);
-      if (n.type !== "entity" && n.type !== "tool_hub") continue;
-      const edges = S.edgesByNode.get(id) || [];
-      if (!edges.some((e) => edgeOk(e, vis))) vis.delete(id);
     }
     S.visibleNodes = vis;
   }
@@ -2224,7 +2230,7 @@
     broadcast({ type: "filters", hiddenConvs: [...S.hiddenConvs], filter: S.filter });
     applyFilters();
     if (!convVisible(S.currentConv)) S.currentConv = S.convOrder.find(convVisible) || S.currentConv;
-    if (network && S.visibleNodes.size && !S.clusters.size) network.fit({ nodes: [...S.visibleNodes], animation: { duration: 400 } });
+    fitVisible();
     renderTree();
     renderLegend();
     renderLayers();
@@ -2267,9 +2273,14 @@
     P.kindLegend($("legend"), { counts, hidden: S.hiddenKinds, onChange: (isolated) => {
       if (isolated) S.hiddenLayers.clear(); // a type shown alone must not sit on a hidden layer
       afterKindToggle();
+      if (isolated) fitVisible(); // "only": bring what is left into view
     } });
   }
   function afterKindToggle() { applyFilters(); renderLegend(); renderLayers(); if (S.tab === "transcript") renderPanel(); }
+  /** fit the view to the visible nodes (unless clustering has drawn them as clusters) */
+  function fitVisible() {
+    if (network && S.visibleNodes.size && !S.clusters.size) network.fit({ nodes: [...S.visibleNodes], animation: { duration: 400 } });
+  }
 
   function renderLayers() {
     const counts = new Map();
@@ -2277,6 +2288,7 @@
     P.layerChips($("layers"), { counts, hidden: S.hiddenLayers, small: false, onChange: (isolated) => {
       if (isolated) S.hiddenKinds.clear(); // a layer shown alone shows all of itself
       applyFilters(); renderLayers(); renderLegend();
+      if (isolated) fitVisible();
     } });
   }
 
